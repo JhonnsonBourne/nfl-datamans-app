@@ -362,6 +362,9 @@ def _render_player_stats(df: pd.DataFrame):
             "Player + Season",
             "Team + Season",
             "Position + Season",
+            "Player + Season + Week",
+            "Team + Season + Week",
+            "Position + Season + Week",
         ],
         index=1,
     )
@@ -376,15 +379,29 @@ def _render_player_stats(df: pd.DataFrame):
             group_cols = [c for c in [team_col, season_col] if c in df_f.columns]
         elif group_choice == "Position + Season":
             group_cols = [c for c in [pos_col, season_col] if c in df_f.columns]
+        elif group_choice == "Player + Season + Week":
+            group_cols = [c for c in [player_col, season_col, week_col] if c in df_f.columns and c]
+        elif group_choice == "Team + Season + Week":
+            group_cols = [c for c in [team_col, season_col, week_col] if c in df_f.columns and c]
+        elif group_choice == "Position + Season + Week":
+            group_cols = [c for c in [pos_col, season_col, week_col] if c in df_f.columns and c]
 
-        # Exclude group-by columns from numeric aggregation to avoid
-        # duplicates on reset_index (e.g., 'season' already exists).
+        # Exclude dimension-like columns from numeric aggregation to avoid
+        # duplicate index insertion and to prevent aggregating week/season.
+        dims_exclude = set([x for x in [season_col, week_col, player_col, team_col, pos_col] if x])
+        dims_exclude |= set(group_cols)
+
         num_cols = [
             c
             for c in df_f.select_dtypes(include=[np.number]).columns.tolist()
-            if c not in set(group_cols)
+            if c not in dims_exclude
         ]
+
+        # Default aggregation: sum. Override specific rate stats to mean.
         agg_dict = {c: "sum" for c in num_cols}
+        for r in ["wopr", "air_yards_share", "target_share", "racr", "pacr", "cpoe"]:
+            if r in agg_dict:
+                agg_dict[r] = "mean"
         grouped = (
             df_f.groupby(group_cols, dropna=False).agg(agg_dict).reset_index()
             if group_cols
