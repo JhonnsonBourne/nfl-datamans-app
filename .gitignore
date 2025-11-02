@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Envs
+.env
+.venv/
+env/
+venv/
+
+# Streamlit local secrets (do not commit real secrets)
+.streamlit/secrets.toml
+
+# OS/IDE
+.DS_Store
+.vscode/
+
