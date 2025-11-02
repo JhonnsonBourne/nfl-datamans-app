@@ -27,6 +27,33 @@ DATASET_CANDIDATES: Dict[str, List[str]] = {
     "pbp": ["load_pbp", "pbp", "read_pbp"],
     "players": ["load_players", "players", "read_players", "load_player_ids"],
     "injuries": ["load_injuries", "injuries", "read_injuries"],
+    # Additional datasets commonly provided by nflreadpy/nflreadr
+    "nextgen_stats": [
+        "load_nextgen_stats",
+        "nextgen_stats",
+        "load_ngs",
+        "read_nextgen_stats",
+    ],
+    "participation": [
+        "load_participation",
+        "participation",
+        "read_participation",
+    ],
+    "snap_counts": [
+        "load_snap_counts",
+        "snap_counts",
+        "read_snap_counts",
+    ],
+    "ftn_charting": [
+        "load_ftn_charting",
+        "ftn_charting",
+        "read_ftn_charting",
+    ],
+    "ff_opportunity": [
+        "load_ff_opportunity",
+        "ff_opportunity",
+        "read_ff_opportunity",
+    ],
 }
 
 

@@ -219,7 +219,7 @@ def _compute_shares_and_adv_metrics(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _render_player_stats(df: pd.DataFrame):
+def _render_player_stats(df: pd.DataFrame, module_name: str, seasons: List[int]):
     st.subheader("Player Stats Explorer")
 
     # Column detection
@@ -472,6 +472,85 @@ def _render_player_stats(df: pd.DataFrame):
                 )
                 st.altair_chart(line, use_container_width=True)
 
+    # Player profile: enrich with players dataset and optional advanced feeds
+    with st.expander("Player Profile", expanded=False):
+        players = sorted([str(x) for x in df_f[player_col].dropna().unique()])
+        who = st.selectbox("Select player", options=[""] + players)
+        if who:
+            players_df = load_dataset_cached(module_name, "players", [])
+
+            # Try to locate a player row by common identifiers or by name
+            def _find_player_row(name: str) -> Optional[pd.Series]:
+                cand_name_cols = ["full_name", "player", "player_name", "name"]
+                for c in cand_name_cols:
+                    if c in players_df.columns:
+                        hit = players_df[players_df[c].astype(str).str.lower() == name.lower()]
+                        if not hit.empty:
+                            return hit.iloc[0]
+                return None
+
+            prow = _find_player_row(who)
+
+            headshot_fields = [
+                "headshot_url",
+                "headshot",
+                "headshot_href",
+                "espn_headshot_url",
+                "gsis_headshot_url",
+            ]
+            headshot = None
+            if prow is not None:
+                for f in headshot_fields:
+                    if f in players_df.columns and pd.notna(prow.get(f)) and str(prow.get(f)).startswith("http"):
+                        headshot = str(prow.get(f))
+                        break
+
+            top_cols = [
+                c for c in ["position", "team", "recent_team", "height", "weight", "birth_date", "college"]
+                if prow is not None and c in players_df.columns
+            ]
+
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                if headshot:
+                    st.image(headshot, caption=who, width=160)
+            with col2:
+                if prow is not None and top_cols:
+                    st.write(prow[top_cols].to_frame(name="value"))
+
+            # Related datasets for the player
+            related = [
+                ("nextgen_stats", "Next Gen Stats"),
+                ("participation", "Participation"),
+                ("snap_counts", "Snap Counts"),
+                ("ftn_charting", "FTN Charting"),
+                ("ff_opportunity", "FF Opportunity"),
+            ]
+            tabs = st.tabs([label for _, label in related])
+
+            # Detect player-name columns commonly used in feeds
+            def _filter_by_player(df_in: pd.DataFrame, name: str) -> pd.DataFrame:
+                for cname in ["player", "player_name", "name", "full_name"]:
+                    if cname in df_in.columns:
+                        return df_in[df_in[cname].astype(str).str.lower() == name.lower()]
+                return df_in
+
+            for (key, _label), tab in zip(related, tabs):
+                with tab:
+                    try:
+                        rel_df = load_dataset_cached(module_name, key, seasons or [])
+                    except Exception as ex:  # noqa: BLE001
+                        st.info(f"Dataset '{key}' not available: {ex}")
+                        continue
+                    if rel_df is None or rel_df.empty:
+                        st.info("No data available")
+                        continue
+                    rel_df = _filter_by_player(rel_df, who)
+                    if not rel_df.empty:
+                        st.dataframe(rel_df, use_container_width=True, height=300)
+                    else:
+                        st.info("No rows for the selected player in this dataset.")
+
 
 if st.session_state.get("loaded"):
     try:
@@ -490,7 +569,7 @@ if st.session_state.get("loaded"):
         )
 
         if dataset in {"player_stats", "weekly"}:
-            _render_player_stats(df)
+            _render_player_stats(df, lib_override, selected_years or [])
         else:
             # Generic filters and table
             df_filtered = _present_filters(df)
