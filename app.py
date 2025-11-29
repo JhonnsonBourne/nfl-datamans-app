@@ -39,3 +39,12 @@ with col2:
 
 with col3:
     st.info("**Export Ready**\n\nDownload any view as a CSV for your own custom analysis.")
+
+# DEBUG: Check if pages exist
+import os
+if os.path.exists("pages"):
+    files = os.listdir("pages")
+    st.sidebar.success(f"Found {len(files)} pages: {', '.join(files)}")
+else:
+    st.error("Pages directory not found!")
+
