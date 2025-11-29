@@ -30,15 +30,14 @@ Select a page from the sidebar or use the quick links below:
 st.divider()
 
 # Quick Navigation Links
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    st.page_link("pages/1_Player_Stats.py", label="Player Stats", icon="📊", use_container_width=True)
-with c2:
-    st.page_link("pages/2_Player_Comparison.py", label="Player Comparison", icon="⚔️", use_container_width=True)
-with c3:
-    st.page_link("pages/3_Leaderboards.py", label="Leaderboards", icon="🏆", use_container_width=True)
-with c4:
-    st.page_link("pages/4_Team_Stats.py", label="Team Stats", icon="🛡️", use_container_width=True)
+st.markdown("""
+<div style="display: flex; justify-content: space-around; flex-wrap: wrap; gap: 10px;">
+    <a href="Player_Stats" target="_self" style="text-decoration: none; background-color: #f0f2f6; padding: 10px 20px; border-radius: 5px; color: #31333F; font-weight: bold;">📊 Player Stats</a>
+    <a href="Player_Comparison" target="_self" style="text-decoration: none; background-color: #f0f2f6; padding: 10px 20px; border-radius: 5px; color: #31333F; font-weight: bold;">⚔️ Player Comparison</a>
+    <a href="Leaderboards" target="_self" style="text-decoration: none; background-color: #f0f2f6; padding: 10px 20px; border-radius: 5px; color: #31333F; font-weight: bold;">🏆 Leaderboards</a>
+    <a href="Team_Stats" target="_self" style="text-decoration: none; background-color: #f0f2f6; padding: 10px 20px; border-radius: 5px; color: #31333F; font-weight: bold;">🛡️ Team Stats</a>
+</div>
+""", unsafe_allow_html=True)
 
 st.divider()
 
