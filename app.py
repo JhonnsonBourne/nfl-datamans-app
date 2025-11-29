@@ -24,8 +24,21 @@ This application is designed to be your go-to resource for NFL statistics, playe
 Data is sourced from the [nflverse](https://nflverse.nflverse.com/), an open-source collection of R and Python packages for NFL data.
 
 ### 👈 Get Started
-Select a page from the sidebar to begin exploring!
+Select a page from the sidebar or use the quick links below:
 """)
+
+st.divider()
+
+# Quick Navigation Links
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    st.page_link("pages/1_Player_Stats.py", label="Player Stats", icon="📊", use_container_width=True)
+with c2:
+    st.page_link("pages/2_Player_Comparison.py", label="Player Comparison", icon="⚔️", use_container_width=True)
+with c3:
+    st.page_link("pages/3_Leaderboards.py", label="Leaderboards", icon="🏆", use_container_width=True)
+with c4:
+    st.page_link("pages/4_Team_Stats.py", label="Team Stats", icon="🛡️", use_container_width=True)
 
 st.divider()
 
@@ -40,11 +53,4 @@ with col2:
 with col3:
     st.info("**Export Ready**\n\nDownload any view as a CSV for your own custom analysis.")
 
-# DEBUG: Check if pages exist
-import os
-if os.path.exists("pages"):
-    files = os.listdir("pages")
-    st.sidebar.success(f"Found {len(files)} pages: {', '.join(files)}")
-else:
-    st.error("Pages directory not found!")
 
