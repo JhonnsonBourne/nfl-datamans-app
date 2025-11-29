@@ -4,6 +4,7 @@ st.set_page_config(
     page_title="NFL Data One-Stop Shop",
     page_icon="🏈",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 st.title("🏈 NFL Data One-Stop Shop")
@@ -15,9 +16,9 @@ This application is designed to be your go-to resource for NFL statistics, playe
 
 ### 🚀 Features
 - **Player Stats Explorer**: Deep dive into player performance with advanced filtering and metrics (WOPR, RACR, etc.).
-- **Player Comparison**: (Coming Soon) Compare players side-by-side to make better start/sit decisions.
-- **Leaderboards**: (Coming Soon) View top performers by position and category.
-- **Team Stats**: (Coming Soon) Analyze team-level trends and matchups.
+- **Player Comparison**: Compare players side-by-side to make better start/sit decisions.
+- **Leaderboards**: View top performers by position and category.
+- **Team Stats**: Analyze team-level trends and matchups.
 
 ### 📚 Data Source
 Data is sourced from the [nflverse](https://nflverse.nflverse.com/), an open-source collection of R and Python packages for NFL data.
