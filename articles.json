@@ -1,0 +1,36 @@
+{
+  "articles": [
+    {
+      "id": "sample-1",
+      "title": "Understanding EPA: The Most Important NFL Stat You've Never Heard Of",
+      "excerpt": "Expected Points Added (EPA) is revolutionizing how we analyze football. Learn how this advanced metric works and why it's more predictive than traditional stats.",
+      "content": "<h2>What is EPA?</h2><p>Expected Points Added (EPA) measures the value of each play in terms of how it changes a team's expected points. Unlike yards or touchdowns, EPA accounts for context - a 5-yard gain on 3rd and 10 is worth less than a 5-yard gain on 3rd and 3.</p><h2>Why EPA Matters</h2><p>EPA is the foundation of modern NFL analytics. It helps us understand which plays truly matter and which players are making the biggest impact on the field.</p>",
+      "author": "Admin",
+      "published": true,
+      "created_at": "2025-01-15T10:00:00",
+      "updated_at": "2025-01-15T10:00:00",
+      "tags": ["Analytics", "EPA", "Advanced Stats"],
+      "category": "Analysis",
+      "featured_image": "",
+      "slug": "understanding-epa-most-important-nfl-stat"
+    },
+    {
+      "id": "sample-2",
+      "title": "2025 Season Preview: Teams to Watch",
+      "excerpt": "Our comprehensive preview of the 2025 NFL season, highlighting teams with the best strength of schedule and breakout candidates.",
+      "content": "<h2>Top Contenders</h2><p>The 2025 season promises to be one of the most competitive in recent memory. With several teams improving their rosters and favorable schedules, the playoff race is wide open.</p><h2>Strength of Schedule Analysis</h2><p>Using our advanced SOS metrics, we've identified which teams have the easiest and hardest paths to the playoffs.</p>",
+      "author": "Admin",
+      "published": true,
+      "created_at": "2025-01-10T10:00:00",
+      "updated_at": "2025-01-10T10:00:00",
+      "tags": ["Season Preview", "Teams", "2025"],
+      "category": "News",
+      "featured_image": "",
+      "slug": "2025-season-preview-teams-to-watch"
+    }
+  ],
+  "last_updated": "2025-01-15T10:00:00"
+}
+
+
+

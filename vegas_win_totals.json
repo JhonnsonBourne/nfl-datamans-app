@@ -1,0 +1,44 @@
+{
+  "2025": {
+    "ARI": 7.5,
+    "ATL": 6.5,
+    "BAL": 11.5,
+    "BUF": 10.5,
+    "CAR": 4.5,
+    "CHI": 7.5,
+    "CIN": 9.5,
+    "CLE": 8.5,
+    "DAL": 10.5,
+    "DEN": 7.5,
+    "DET": 11.5,
+    "GB": 9.5,
+    "HOU": 9.5,
+    "IND": 8.5,
+    "JAX": 8.5,
+    "KC": 11.5,
+    "LV": 6.5,
+    "LAC": 8.5,
+    "LAR": 9.5,
+    "MIA": 9.5,
+    "MIN": 6.5,
+    "NE": 4.5,
+    "NO": 7.5,
+    "NYG": 6.5,
+    "NYJ": 9.5,
+    "PHI": 10.5,
+    "PIT": 8.5,
+    "SF": 11.5,
+    "SEA": 7.5,
+    "TB": 8.5,
+    "TEN": 7.5,
+    "WAS": 8.5
+  },
+  "note": "Vegas win totals for NFL teams. Update annually before season starts. Values represent over/under win totals from major sportsbooks.",
+  "sources": [
+    "https://www.covers.com/nfl/nfl-odds-win-totals",
+    "https://www.boydsbets.com/nfl-season-win-totals/",
+    "DraftKings, FanDuel, BetMGM sportsbooks"
+  ],
+  "update_instructions": "Update this file annually before the NFL season starts. Get win totals from major sportsbooks (DraftKings, FanDuel, BetMGM) and use the consensus or average. Team abbreviations must match exactly (ARI, ATL, BAL, etc.)."
+}
+
