@@ -1613,9 +1613,4 @@ function PlayerStats() {
     );
 }
 
-// Enable Why Did You Render tracking in development
-if (import.meta.env.DEV && typeof window !== 'undefined') {
-    PlayerStats.whyDidYouRender = true;
-}
-
 export default PlayerStats;
