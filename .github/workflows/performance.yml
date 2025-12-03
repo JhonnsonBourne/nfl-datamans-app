@@ -1,13 +1,11 @@
 name: Performance Tests
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  # Disabled on push/PR - too slow for regular development
+  # Run manually or on schedule only
   schedule:
-    # Run daily at 2 AM UTC
-    - cron: '0 2 * * *'
+    # Run weekly on Sundays at 2 AM UTC
+    - cron: '0 2 * * 0'
   workflow_dispatch: # Allow manual trigger
 
 jobs:

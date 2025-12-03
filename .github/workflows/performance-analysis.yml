@@ -1,14 +1,11 @@
 name: Performance Analysis
 
 on:
-  workflow_run:
-    workflows: ["E2E Tests", "Performance Tests"]
-    types:
-      - completed
+  # Only run manually or on schedule - dependent workflows are disabled
   workflow_dispatch: # Allow manual trigger
   schedule:
-    # Run daily at 3 AM UTC (after performance tests)
-    - cron: '0 3 * * *'
+    # Run weekly on Sundays at 3 AM UTC (after performance tests)
+    - cron: '0 3 * * 0'
 
 jobs:
   analyze-performance:
