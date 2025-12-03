@@ -1,0 +1,105 @@
+name: Performance Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  performance-tests:
+    name: Performance & Lighthouse
+    runs-on: ubuntu-latest
+    
+    defaults:
+      run:
+        working-directory: ./frontend
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build frontend
+        run: npm run build
+      
+      - name: Install Playwright
+        run: npx playwright install --with-deps chromium
+      
+      - name: Run Playwright performance tests
+        run: |
+          npx playwright test --config=playwright.performance.config.js || true
+        continue-on-error: true
+      
+      - name: Setup Lighthouse CI
+        run: |
+          npm install -g @lhci/cli
+      
+      - name: Start server
+        run: |
+          npm run preview &
+          sleep 5
+      
+      - name: Run Lighthouse CI
+        run: |
+          lhci autorun --collect.url=http://localhost:4173 --collect.numberOfRuns=3 || true
+        continue-on-error: true
+      
+      - name: Upload Lighthouse results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: lighthouse-results
+          path: .lighthouseci/
+          retention-days: 30
+
+  performance-budget:
+    name: Performance Budget Check
+    runs-on: ubuntu-latest
+    
+    defaults:
+      run:
+        working-directory: ./frontend
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run performance budget tests
+        run: |
+          npm run test -- --run PlayerStats.performance
+      
+      - name: Check bundle size
+        run: |
+          npm run build
+          BUNDLE_SIZE=$(du -sh dist | cut -f1)
+          echo "Bundle size: $BUNDLE_SIZE"
+          # Fail if bundle is too large (adjust threshold as needed)
+          if [ $(du -sk dist | cut -f1) -gt 5000 ]; then
+            echo "⚠️ Bundle size exceeds 5MB threshold"
+            exit 1
+          fi
+

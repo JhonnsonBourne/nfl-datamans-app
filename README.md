@@ -2,6 +2,13 @@
 
 A modern web application for NFL statistics, player analysis, and fantasy football insights.
 
+## CI/CD Status
+
+![Tests](https://github.com/JhonnsonBourne/nfl-datamans-app/workflows/Tests/badge.svg)
+![Performance Tests](https://github.com/JhonnsonBourne/nfl-datamans-app/workflows/Performance%20Tests/badge.svg)
+![E2E Tests](https://github.com/JhonnsonBourne/nfl-datamans-app/workflows/E2E%20Tests/badge.svg)
+![Code Quality](https://github.com/JhonnsonBourne/nfl-datamans-app/workflows/Code%20Quality/badge.svg)
+
 ## Architecture
 
 - **Frontend**: React + Vite + Tailwind CSS
