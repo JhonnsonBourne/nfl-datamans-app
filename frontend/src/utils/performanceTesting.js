@@ -96,8 +96,7 @@ export function initWebVitals() {
     
     // Import web-vitals dynamically (only if available)
     // Note: This will fail silently if web-vitals is not installed
-    try {
-        import('web-vitals').then(({ onCLS, onFID, onFCP, onLCP, onTTFB, onINP }) => {
+    import('web-vitals').then(({ onCLS, onFID, onFCP, onLCP, onTTFB, onINP }) => {
         onCLS((metric) => {
             console.log('📊 [WEB_VITALS] CLS:', metric);
             if (metric.value > 0.1) {
