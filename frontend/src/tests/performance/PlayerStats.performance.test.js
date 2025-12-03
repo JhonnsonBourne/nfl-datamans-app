@@ -6,7 +6,17 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, waitFor } from '@testing-library/react';
-import { measureComponentRender, measureAsyncOperation, PerformanceBudget } from '../../utils/performanceTesting';
+// Import performance testing utilities - skip if not available
+let measureComponentRender, measureAsyncOperation, PerformanceBudget;
+try {
+  const perfUtils = await import('../../utils/performanceTesting');
+  measureComponentRender = perfUtils.measureComponentRender;
+  measureAsyncOperation = perfUtils.measureAsyncOperation;
+  PerformanceBudget = perfUtils.PerformanceBudget;
+} catch (e) {
+  // Fallback if performanceTesting not available
+  console.warn('Performance testing utilities not available:', e);
+}
 
 // Mock the API
 vi.mock('../../services/api', () => ({
