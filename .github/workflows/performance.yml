@@ -31,29 +31,38 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       
       - name: Install dependencies
+        timeout-minutes: 5
         run: npm ci
       
       - name: Build frontend
+        timeout-minutes: 5
         run: npm run build
       
       - name: Install Playwright
+        timeout-minutes: 10
         run: npx playwright install --with-deps chromium
       
       - name: Run Playwright performance tests
+        timeout-minutes: 5
         run: |
           npx playwright test --config=playwright.performance.config.js || true
         continue-on-error: true
       
       - name: Setup Lighthouse CI
+        timeout-minutes: 5
         run: |
           npm install -g @lhci/cli
       
-      - name: Start server
+      - name: Start preview server
+        timeout-minutes: 2
         run: |
           npm run preview &
-          sleep 5
+          echo "Waiting for server to start..."
+          timeout 30 bash -c 'until curl -f http://localhost:4173 > /dev/null 2>&1; do sleep 1; done' || echo "Server check timeout, continuing anyway"
+          echo "Server should be ready"
       
       - name: Run Lighthouse CI
+        timeout-minutes: 10
         run: |
           lhci autorun --collect.url=http://localhost:4173 --collect.numberOfRuns=3 || true
         continue-on-error: true
