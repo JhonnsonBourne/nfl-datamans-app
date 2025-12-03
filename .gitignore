@@ -57,7 +57,7 @@ Thumbs.db
 debug_log.json
 *.log
 profiler_logs/
-*.profiler.json
+profiler-*.json
 
 # Data files (if large or sensitive)
 *.csv
