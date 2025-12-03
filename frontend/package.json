@@ -37,7 +37,6 @@
     "zustand": "^5.0.9"
   },
   "devDependencies": {
-    "@welldone-software/why-did-you-render": "^8.0.1",
     "web-vitals": "^3.5.1",
     "@eslint/js": "^9.39.1",
     "@tailwindcss/postcss": "^4.1.17",
