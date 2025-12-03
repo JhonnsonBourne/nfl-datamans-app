@@ -35,17 +35,30 @@ From local profiler logs (`profiler_logs/`), I found:
 
 #### UI Thread Blocking Detections
 
-**Total Blocking Events**: 2 detected across recent runs
+**Total Blocking Events**: 36 detected across 14 profiler log files
 
-**Blocking Delays**:
-- **Event 1**: 284.1ms delay
-- **Event 2**: 282.8ms delay
+**Blocking Delays Analysis**:
+- **Average Delay**: 555.9ms
+- **Max Delay**: 1,894.3ms (1.9 seconds!)
+- **Min Delay**: 130.3ms
+- **Most Common**: ~280-285ms blocks (consistent pattern)
 
-**Analysis**:
-- ⚠️ **UI blocks detected**: ~280-285ms delays
+**Critical Finding**: Earlier runs show **1.8-1.9 second blocks** (before fix), recent runs show **~280ms blocks** (after fix)
+
+**Recent Runs (After Fix)**:
+- Latest runs: ~280-285ms delays
 - ✅ **Under 500ms threshold**: Not critical, but noticeable
 - ✅ **Under 2s threshold**: Not causing complete hangs
-- ⚠️ **Pattern**: Consistent ~280ms blocks suggest a specific operation
+
+**Earlier Runs (Before Fix)**:
+- Multiple 1.8-1.9 second blocks detected
+- ❌ **Over 1s threshold**: Causing noticeable hangs
+- Pattern: Initial ~280ms block, then 1.8s+ block, then smaller blocks
+
+**Analysis**:
+- ✅ **Significant Improvement**: Blocks reduced from 1,800ms+ to ~280ms (84% reduction)
+- ⚠️ **Still Present**: ~280ms blocks suggest a specific operation needs optimization
+- ✅ **No Critical Hangs**: Recent runs show no blocks >500ms
 
 #### Memory Usage
 
@@ -103,13 +116,13 @@ From profiler data:
 
 ### Before Fix (Original Version)
 - **Limit**: 10,000 players
-- **Expected Blocks**: 1,800ms+ (based on previous reports)
-- **Status**: ❌ Critical performance issue
+- **Detected Blocks**: 1,800-1,900ms (confirmed in profiler logs)
+- **Status**: ❌ Critical performance issue - UI completely frozen
 
 ### After Fix (Current Version)
 - **Limit**: 200-2,000 players (position-based)
-- **Detected Blocks**: ~280ms
-- **Status**: ✅ Significant improvement (84% reduction)
+- **Detected Blocks**: ~280ms (confirmed in recent profiler logs)
+- **Status**: ✅ **84% improvement** - UI responsive, minor lag only
 
 ## Performance Metrics Breakdown
 
