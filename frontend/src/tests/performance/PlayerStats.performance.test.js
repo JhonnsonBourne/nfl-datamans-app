@@ -6,16 +6,59 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, waitFor } from '@testing-library/react';
-// Import performance testing utilities - skip if not available
-let measureComponentRender, measureAsyncOperation, PerformanceBudget;
-try {
-  const perfUtils = await import('../../utils/performanceTesting');
-  measureComponentRender = perfUtils.measureComponentRender;
-  measureAsyncOperation = perfUtils.measureAsyncOperation;
-  PerformanceBudget = perfUtils.PerformanceBudget;
-} catch (e) {
-  // Fallback if performanceTesting not available
-  console.warn('Performance testing utilities not available:', e);
+
+// Simple performance budget class for tests
+class PerformanceBudget {
+    constructor(budgets = {}) {
+        this.budgets = {
+            renderTime: 16,
+            asyncOperation: 1000,
+            dataProcessing: 500,
+            filterOperation: 100,
+            sortOperation: 200,
+            ...budgets
+        };
+        this.violations = [];
+    }
+    
+    check(operationName, duration, category = 'renderTime') {
+        const budget = this.budgets[category];
+        if (duration > budget) {
+            const violation = {
+                operation: operationName,
+                duration,
+                budget,
+                category,
+                timestamp: Date.now()
+            };
+            this.violations.push(violation);
+            return violation;
+        }
+        return null;
+    }
+    
+    getViolations() {
+        return this.violations;
+    }
+    
+    clear() {
+        this.violations = [];
+    }
+}
+
+// Simple measurement functions
+function measureComponentRender(componentName, renderFn) {
+    const start = performance.now();
+    const result = renderFn();
+    const duration = performance.now() - start;
+    return { result, duration };
+}
+
+async function measureAsyncOperation(operationName, asyncFn) {
+    const start = performance.now();
+    const result = await asyncFn();
+    const duration = performance.now() - start;
+    return { result, duration };
 }
 
 // Mock the API
@@ -127,4 +170,3 @@ describe('PlayerStats Performance', () => {
         expect(violations.length).toBe(0);
     });
 });
-
