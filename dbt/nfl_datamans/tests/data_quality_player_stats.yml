@@ -1,0 +1,109 @@
+version: 2
+
+models:
+  - name: stg_player_stats
+    description: "Staging view with comprehensive data quality checks"
+    columns:
+      - name: player_id
+        description: "Player identifier from nflverse"
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "LENGTH(player_id) > 0"
+              config:
+                severity: error
+      
+      - name: season
+        description: "Season year"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 1999
+              max_value: 2030
+              inclusive: true
+              config:
+                severity: error
+      
+      - name: week
+        description: "Week number"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 22
+              inclusive: true
+              config:
+                severity: warn
+      
+      - name: position
+        description: "Player position"
+        tests:
+          - not_null
+          - dbt_utils.accepted_values:
+              values: ['QB', 'RB', 'WR', 'TE', 'K', 'DEF', 'DST']
+              config:
+                severity: warn
+      
+      - name: fantasy_points_ppr
+        description: "Fantasy points (PPR scoring)"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1000
+              inclusive: true
+              config:
+                severity: warn
+      
+      - name: passing_yards
+        description: "Passing yards"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 10000
+              inclusive: true
+              config:
+                severity: warn
+      
+      - name: rushing_yards
+        description: "Rushing yards"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 5000
+              inclusive: true
+              config:
+                severity: warn
+      
+      - name: receiving_yards
+        description: "Receiving yards"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 5000
+              inclusive: true
+              config:
+                severity: warn
+    
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - player_id
+            - season
+            - week
+          config:
+            severity: error
+      
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          min_value: 1000
+          max_value: 1000000
+          config:
+            severity: warn
+      
+      - dbt_expectations.expect_table_columns_to_match_ordered_list:
+          column_list:
+            - player_id
+            - season
+            - week
+            - position
+          config:
+            severity: warn
+

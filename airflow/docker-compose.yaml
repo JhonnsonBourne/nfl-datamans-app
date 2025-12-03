@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${NFL_DB_USER:-airflow}
+      POSTGRES_PASSWORD: ${NFL_DB_PASSWORD:-airflow}
+      POSTGRES_DB: ${NFL_DB_NAME:-nfl_datamans}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  airflow-init:
+    build: .
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        airflow db init && \
+        airflow users create \
+          --username admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com \
+          --password admin
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/nfl_datamans
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      NFL_DB_HOST: postgres
+      NFL_DB_PORT: 5432
+      NFL_DB_NAME: nfl_datamans
+      NFL_DB_USER: airflow
+      NFL_DB_PASSWORD: airflow
+    depends_on:
+      - postgres
+    volumes:
+      - ../dbt/nfl_datamans:/opt/airflow/dbt/nfl_datamans
+      - ../dbt/nfl_datamans/profiles.yml.example:/opt/airflow/.dbt/profiles.yml:ro
+      - ../:/opt/airflow/app
+
+  airflow-webserver:
+    build: .
+    command: webserver
+    restart: always
+    environment:
+      AIRFLOW__CORE__EXECUTOR: ${AIRFLOW__CORE__EXECUTOR:-LocalExecutor}
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: ${AIRFLOW__CORE__SQL_ALCHEMY_CONN:-postgresql+psycopg2://${NFL_DB_USER:-airflow}:${NFL_DB_PASSWORD:-airflow}@postgres:5432/${NFL_DB_NAME:-nfl_datamans}}
+      AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES:-False}
+      NFL_DB_HOST: ${NFL_DB_HOST:-postgres}
+      NFL_DB_PORT: ${NFL_DB_PORT:-5432}
+      NFL_DB_NAME: ${NFL_DB_NAME:-nfl_datamans}
+      NFL_DB_USER: ${NFL_DB_USER:-airflow}
+      NFL_DB_PASSWORD: ${NFL_DB_PASSWORD:-airflow}
+      PYTHONPATH: ${PYTHONPATH:-/opt/airflow/app}
+    depends_on:
+      - postgres
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ../dbt/nfl_datamans:/opt/airflow/dbt/nfl_datamans
+      - ../dbt/nfl_datamans/profiles.yml.example:/opt/airflow/.dbt/profiles.yml:ro
+      - ../:/opt/airflow/app
+
+  airflow-scheduler:
+    build: .
+    command: scheduler
+    restart: always
+    environment:
+      AIRFLOW__CORE__EXECUTOR: ${AIRFLOW__CORE__EXECUTOR:-LocalExecutor}
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: ${AIRFLOW__CORE__SQL_ALCHEMY_CONN:-postgresql+psycopg2://${NFL_DB_USER:-airflow}:${NFL_DB_PASSWORD:-airflow}@postgres:5432/${NFL_DB_NAME:-nfl_datamans}}
+      AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES:-False}
+      NFL_DB_HOST: ${NFL_DB_HOST:-postgres}
+      NFL_DB_PORT: ${NFL_DB_PORT:-5432}
+      NFL_DB_NAME: ${NFL_DB_NAME:-nfl_datamans}
+      NFL_DB_USER: ${NFL_DB_USER:-airflow}
+      NFL_DB_PASSWORD: ${NFL_DB_PASSWORD:-airflow}
+      PYTHONPATH: ${PYTHONPATH:-/opt/airflow/app}
+    depends_on:
+      - postgres
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ../dbt/nfl_datamans:/opt/airflow/dbt/nfl_datamans
+      - ../dbt/nfl_datamans/profiles.yml.example:/opt/airflow/.dbt/profiles.yml:ro
+      - ../:/opt/airflow/app
+
+volumes:
+  postgres_data:

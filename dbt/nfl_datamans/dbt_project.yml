@@ -1,0 +1,21 @@
+name: 'nfl_datamans'
+version: '1.0.0'
+config-version: 2
+
+profile: 'nfl_datamans'
+
+model-paths: ['models']
+seed-paths: ['seeds']
+macro-paths: ['macros']
+test-paths: ['tests']
+
+target-path: 'target'
+clean-targets: ['target', 'dbt_modules']
+
+models:
+  nfl_datamans:
+    +materialized: view
+    staging:
+      +schema: stg_nfl
+    core:
+      +schema: core_nfl

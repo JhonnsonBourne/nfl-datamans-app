@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: nflverse
+    description: "Raw nflverse tables loaded from nflreadpy via Airflow."
+    schema: raw_nfl
+    tables:
+      - name: player_stats
+        description: "Raw player stats from nflverse (weekly level)."
+      - name: schedules
+        description: "Raw schedules/games from nflverse."

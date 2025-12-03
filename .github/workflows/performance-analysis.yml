@@ -1,0 +1,143 @@
+name: Performance Analysis
+
+on:
+  workflow_run:
+    workflows: ["E2E Tests", "Performance Tests"]
+    types:
+      - completed
+  workflow_dispatch: # Allow manual trigger
+  schedule:
+    # Run daily at 3 AM UTC (after performance tests)
+    - cron: '0 3 * * *'
+
+jobs:
+  analyze-performance:
+    name: Analyze Performance Data
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Download workflow artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-performance-*.json'
+          merge-multiple: true
+          path: workflow-artifacts
+        continue-on-error: true
+      
+      - name: Download E2E test artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: 'playwright-report'
+          merge-multiple: true
+          path: workflow-artifacts
+        continue-on-error: true
+      
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install statistics
+      
+      - name: Run performance analysis
+        run: |
+          python3 scripts/analyze_workflow_performance.py workflow-artifacts
+      
+      - name: Upload analysis results
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-analysis
+          path: |
+            workflow-artifacts/performance_analysis.json
+            workflow-artifacts/performance_report.md
+          retention-days: 90
+      
+      - name: Comment on PR with analysis
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = 'workflow-artifacts/performance_report.md';
+            
+            if (fs.existsSync(reportPath)) {
+              const report = fs.readFileSync(reportPath, 'utf8');
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## 📊 Performance Analysis Results\n\n\`\`\`\n${report}\n\`\`\``
+              });
+            }
+      
+      - name: Create issue if critical issues found
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const analysisPath = 'workflow-artifacts/performance_analysis.json';
+            
+            if (fs.existsSync(analysisPath)) {
+              const analysis = JSON.parse(fs.readFileSync(analysisPath, 'utf8'));
+              const highSeverityIssues = analysis.summary?.high_severity_issues || 0;
+              
+              if (highSeverityIssues > 0) {
+                const issues = analysis.issues.filter(i => i.severity === 'high');
+                const issueBody = `## 🚨 Critical Performance Issues Detected
+                
+                Found ${highSeverityIssues} high-severity performance issues:
+                
+                ${issues.map(i => `- **${i.position}**: ${i.message}`).join('\n')}
+                
+                See [performance analysis report](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.
+                `;
+                
+                github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: `🚨 Performance Issues: ${highSeverityIssues} critical issues detected`,
+                  body: issueBody,
+                  labels: ['performance', 'bug', 'high-priority']
+                });
+              }
+            }
+
+  generate-trends:
+    name: Generate Performance Trends
+    runs-on: ubuntu-latest
+    needs: analyze-performance
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download analysis artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: 'performance-analysis'
+          path: analysis-data
+      
+      - name: Generate trends report
+        run: |
+          echo "# Performance Trends" > trends.md
+          echo "## Historical Performance Data" >> trends.md
+          echo "" >> trends.md
+          echo "This report tracks performance over time." >> trends.md
+          # TODO: Implement trend analysis comparing historical data
+      
+      - name: Upload trends
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-trends
+          path: trends.md
+          retention-days: 365
+

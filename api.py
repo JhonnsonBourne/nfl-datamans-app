@@ -15,10 +15,20 @@ from collections import deque
 import numpy as np
 import pandas as pd
 import math
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
+
+# Optional database imports (for Phase 1 features)
+try:
+    from sqlalchemy.orm import Session
+    from sqlalchemy import text
+    SQLALCHEMY_AVAILABLE = True
+except ImportError:
+    SQLALCHEMY_AVAILABLE = False
+    # Create dummy Session type for type hints
+    Session = None
 
 # Phase 2: Import sklearn for PCA and clustering
 try:
@@ -38,11 +48,120 @@ from nflread_adapter import (
     import_library,
 )
 
+# Performance monitoring
+# Note: Using absolute import to avoid conflict with utils.py
+_performance_module = None
+try:
+    import sys
+    from pathlib import Path
+    import importlib.util
+    
+    # Import using the package structure - cache the module
+    utils_path = Path(__file__).parent / "utils" / "performance.py"
+    spec = importlib.util.spec_from_file_location("performance", utils_path)
+    if spec and spec.loader:
+        _performance_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_performance_module)
+        
+        PerformanceTimer = _performance_module.PerformanceTimer
+        time_operation = _performance_module.time_operation
+        track_endpoint_timing = _performance_module.track_endpoint_timing
+        get_performance_summary = _performance_module.get_performance_summary
+        get_slow_operations = _performance_module.get_slow_operations
+        
+        PERFORMANCE_MONITORING_AVAILABLE = True
+        print("✅ Performance monitoring enabled")
+    else:
+        raise ImportError("Could not load performance module")
+except Exception as e:
+    PERFORMANCE_MONITORING_AVAILABLE = False
+    print(f"Warning: Performance monitoring not available: {e}")
+    # Fallback - no-op context manager
+    class PerformanceTimer:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+    
+    def time_operation(*args, **kwargs):
+        def decorator(f):
+            return f
+        return decorator
+    
+    def track_endpoint_timing(*args, **kwargs):
+        def decorator(f):
+            return f
+        return decorator
+    
+    def get_performance_summary():
+        return {"status": "not_available"}
+    
+    def get_slow_operations(*args, **kwargs):
+        return []
+
+# Phase 1: Database connection pooling and resiliency
+try:
+    from database.connection import get_db, engine
+    from utils.circuit_breaker import db_circuit_breaker
+    DATABASE_AVAILABLE = True
+except ImportError:
+    DATABASE_AVAILABLE = False
+    print("Warning: Database modules not available - database features disabled")
+
 # Historical data range - player_stats, pbp, and schedules are available back to 1999
 # Data quality is consistent with full EPA and advanced metrics throughout
 HISTORICAL_SEASONS_START = 1999
 CURRENT_SEASON = 2025
 ALL_HISTORICAL_SEASONS = list(range(HISTORICAL_SEASONS_START, CURRENT_SEASON + 1))  # 1999-2025 (27 seasons)
+
+# ============================================================================
+# CACHING LAYER - Dramatically improves response times for repeated requests
+# ============================================================================
+import time
+from functools import lru_cache
+
+# In-memory cache for expensive dataset operations
+# Key: (dataset, seasons_tuple, include_ngs, ngs_stat_type) -> (df, timestamp)
+_DATASET_CACHE: Dict[tuple, tuple] = {}
+_CACHE_TTL_SECONDS = 300  # 5 minute cache TTL
+_CACHE_MAX_SIZE = 20  # Maximum number of cached datasets
+
+def _get_cache_key(dataset: str, seasons: Optional[List[int]], include_ngs: bool = False, ngs_stat_type: str = "receiving") -> tuple:
+    """Generate a cache key for dataset requests."""
+    seasons_tuple = tuple(sorted(seasons)) if seasons else ()
+    return (dataset, seasons_tuple, include_ngs, ngs_stat_type)
+
+def _get_cached_df(cache_key: tuple) -> Optional[pd.DataFrame]:
+    """Get a cached DataFrame if it exists and is not expired."""
+    if cache_key in _DATASET_CACHE:
+        df, timestamp = _DATASET_CACHE[cache_key]
+        if time.time() - timestamp < _CACHE_TTL_SECONDS:
+            print(f"✅ CACHE HIT: {cache_key[0]} (age: {int(time.time() - timestamp)}s)")
+            return df.copy()  # Return a copy to prevent mutation
+        else:
+            # Expired - remove from cache
+            del _DATASET_CACHE[cache_key]
+            print(f"🔄 CACHE EXPIRED: {cache_key[0]}")
+    return None
+
+def _set_cached_df(cache_key: tuple, df: pd.DataFrame):
+    """Cache a DataFrame with current timestamp."""
+    # Evict oldest entries if cache is full
+    if len(_DATASET_CACHE) >= _CACHE_MAX_SIZE:
+        oldest_key = min(_DATASET_CACHE.keys(), key=lambda k: _DATASET_CACHE[k][1])
+        del _DATASET_CACHE[oldest_key]
+        print(f"🗑️ CACHE EVICTED: {oldest_key[0]}")
+    
+    _DATASET_CACHE[cache_key] = (df.copy(), time.time())
+    print(f"💾 CACHE SET: {cache_key[0]} ({len(df):,} rows)")
+
+def clear_cache():
+    """Clear all cached data."""
+    global _DATASET_CACHE
+    _DATASET_CACHE = {}
+    print("🧹 CACHE CLEARED")
 
 app = FastAPI(title="NFL Data API", version="1.0.0")
 
@@ -142,7 +261,138 @@ def clean_dict(d):
 
 @app.get("/health")
 def health() -> Dict[str, str]:
+    """Basic health check endpoint."""
     return {"status": "ok"}
+
+
+@app.get("/cache/status")
+def cache_status() -> Dict[str, Any]:
+    """Get cache status and statistics."""
+    cache_info = []
+    for key, (df, timestamp) in _DATASET_CACHE.items():
+        age_seconds = int(time.time() - timestamp)
+        cache_info.append({
+            "dataset": key[0],
+            "seasons": list(key[1]) if key[1] else [],
+            "include_ngs": key[2],
+            "ngs_stat_type": key[3],
+            "rows": len(df),
+            "age_seconds": age_seconds,
+            "expires_in_seconds": max(0, _CACHE_TTL_SECONDS - age_seconds)
+        })
+    
+    return {
+        "cache_size": len(_DATASET_CACHE),
+        "max_size": _CACHE_MAX_SIZE,
+        "ttl_seconds": _CACHE_TTL_SECONDS,
+        "entries": cache_info
+    }
+
+
+@app.post("/cache/clear")
+def cache_clear():
+    """Clear all cached data."""
+    clear_cache()
+    return {"status": "cleared", "message": "All cached data has been cleared"}
+
+
+@app.get("/health/detailed")
+def health_detailed() -> Dict[str, Any]:
+    """
+    Detailed health check with dependency status.
+    
+    Checks:
+    - Database connectivity
+    - Connection pool status
+    - Circuit breaker state
+    - dbt models availability
+    """
+    health_status = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "checks": {}
+    }
+    
+    # Database check
+    if DATABASE_AVAILABLE and SQLALCHEMY_AVAILABLE:
+        try:
+            from database.connection import get_db, engine
+            from sqlalchemy import text
+            
+            # Test database connection
+            db = next(get_db())
+            result = db.execute(text("SELECT 1"))
+            result.scalar()
+            health_status["checks"]["database"] = "healthy"
+            
+            # Connection pool stats
+            pool = engine.pool
+            health_status["checks"]["connection_pool"] = {
+                "size": pool.size(),
+                "checked_in": pool.checkedin(),
+                "checked_out": pool.checkedout(),
+                "overflow": pool.overflow(),
+            }
+            
+            # Circuit breaker state
+            health_status["checks"]["circuit_breaker"] = db_circuit_breaker.get_state()
+            
+            # Check dbt models
+            try:
+                result = db.execute(text("SELECT COUNT(*) FROM stg_nfl.stg_player_stats"))
+                count = result.scalar()
+                health_status["checks"]["dbt_models"] = {
+                    "status": "healthy",
+                    "player_stats_count": count
+                }
+            except Exception as e:
+                health_status["checks"]["dbt_models"] = {
+                    "status": "unhealthy",
+                    "error": str(e)
+                }
+                health_status["status"] = "degraded"
+                
+        except Exception as e:
+            health_status["checks"]["database"] = {
+                "status": "unhealthy",
+                "error": str(e)
+            }
+            health_status["status"] = "degraded"
+    else:
+        health_status["checks"]["database"] = "not_available"
+        health_status["checks"]["connection_pool"] = "not_available"
+        health_status["checks"]["circuit_breaker"] = "not_available"
+    
+    return health_status
+
+
+@app.get("/health/circuit-breaker")
+def health_circuit_breaker() -> Dict[str, Any]:
+    """Get circuit breaker state."""
+    if not DATABASE_AVAILABLE:
+        return {
+            "status": "not_available",
+            "message": "Database modules not available"
+        }
+    
+    return {
+        "circuit_breaker": db_circuit_breaker.get_state(),
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.post("/health/circuit-breaker/reset")
+def reset_circuit_breaker() -> Dict[str, str]:
+    """Manually reset circuit breaker (admin only)."""
+    if not DATABASE_AVAILABLE:
+        return {"status": "not_available"}
+    
+    db_circuit_breaker.reset()
+    log_info("Circuit breaker manually reset")
+    return {
+        "status": "reset",
+        "message": "Circuit breaker has been reset to CLOSED state"
+    }
 
 
 @app.post("/debug/report-error")
@@ -189,6 +439,123 @@ def get_debug_status():
         "last_error": list(DEBUG_ERRORS)[-1] if DEBUG_ERRORS else None,
         "last_log": list(DEBUG_LOGS)[-1] if DEBUG_LOGS else None,
     }
+
+
+@app.get("/debug/performance")
+def get_performance_metrics():
+    """Get performance metrics summary."""
+    if not PERFORMANCE_MONITORING_AVAILABLE:
+        return {"status": "not_available", "message": "Performance monitoring not enabled"}
+    try:
+        return get_performance_summary()
+    except Exception as e:
+        log_error(e, {"endpoint": "get_performance_metrics"})
+        return {
+            "status": "error",
+            "error": str(e),
+            "message": "Error retrieving performance metrics"
+        }
+
+
+@app.get("/debug/slow-operations")
+def get_slow_operations_endpoint(limit: int = Query(20, ge=1, le=100)):
+    """Get recent slow operations."""
+    if not PERFORMANCE_MONITORING_AVAILABLE:
+        return {"status": "not_available", "message": "Performance monitoring not enabled"}
+    try:
+        slow_ops = get_slow_operations(limit)
+        return {
+            "count": len(slow_ops),
+            "operations": slow_ops
+        }
+    except Exception as e:
+        log_error(e, {"endpoint": "get_slow_operations_endpoint"})
+        return {
+            "status": "error",
+            "error": str(e),
+            "message": "Error retrieving slow operations"
+        }
+
+
+@app.post("/debug/profiler-data")
+async def receive_profiler_data(request: Request):
+    """Receive profiler data from frontend for analysis."""
+    try:
+        import json
+        from pathlib import Path
+        
+        # Handle both JSON and FormData (for sendBeacon fallback)
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            data = await request.json()
+        elif "multipart/form-data" in content_type or "form-data" in content_type:
+            form = await request.form()
+            data_str = form.get("data")
+            if data_str:
+                data = json.loads(data_str)
+            else:
+                return {"status": "error", "message": "No data field in form"}
+        else:
+            # Try JSON anyway
+            try:
+                data = await request.json()
+            except:
+                return {"status": "error", "message": f"Unsupported content-type: {content_type}"}
+        
+        # Save to file for agent access
+        profiler_dir = Path("profiler_logs")
+        profiler_dir.mkdir(exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = profiler_dir / f"profiler_data_{timestamp}.json"
+        
+        with open(filename, 'w') as f:
+            json.dump(data, f, indent=2, default=str)
+        
+        log_info(f"Received profiler data: {filename}", {
+            "blocking_detections": len(data.get("blockingDetections", [])),
+            "render_count": len(data.get("renderHistory", [])),
+            "function_stats_count": len(data.get("functionStats", {})),
+        })
+        
+        return {
+            "status": "ok",
+            "message": f"Profiler data saved to {filename}",
+            "filename": str(filename)
+        }
+    except Exception as e:
+        log_error(e, {"endpoint": "receive_profiler_data"})
+        return {
+            "status": "error",
+            "error": str(e),
+            "message": "Error saving profiler data"
+        }
+
+
+@app.get("/debug/profiler-data")
+def get_profiler_data(limit: int = Query(5, ge=1, le=20)):
+    """Get recent profiler data files."""
+    try:
+        from pathlib import Path
+        
+        profiler_dir = Path("profiler_logs")
+        if not profiler_dir.exists():
+            return {"files": [], "count": 0}
+        
+        files = sorted(profiler_dir.glob("profiler_data_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        files = files[:limit]
+        
+        return {
+            "count": len(files),
+            "files": [{"name": f.name, "size": f.stat().st_size, "modified": datetime.fromtimestamp(f.stat().st_mtime).isoformat()} for f in files]
+        }
+    except Exception as e:
+        log_error(e, {"endpoint": "get_profiler_data"})
+        return {
+            "status": "error",
+            "error": str(e),
+            "message": "Error retrieving profiler data"
+        }
 
 
 @app.exception_handler(Exception)
@@ -258,6 +625,7 @@ def get_players():
 
 
 @app.get("/v1/player/{player_id}")
+@track_endpoint_timing("/v1/player/{player_id}") if PERFORMANCE_MONITORING_AVAILABLE else lambda f: f
 def get_player_profile(
     player_id: str,
     seasons: Optional[List[int]] = Query(None, description="Seasons to include stats for"),
@@ -622,6 +990,11 @@ def get_data(
     include_ngs: bool = Query(True, description="Include NextGen Stats data (default: True)"),
     ngs_stat_type: str = Query("receiving", pattern="^(receiving|rushing|passing)$", description="NextGen Stats type: receiving, rushing, or passing"),
 ):
+    """Get dataset with performance tracking and caching."""
+    import time
+    start_time = time.perf_counter()
+    endpoint_path = f"/v1/data/{dataset}"
+    
     # Validate dataset key
     if dataset not in DATASET_CANDIDATES:
         raise HTTPException(
@@ -637,8 +1010,48 @@ def get_data(
 
     # Seasons
     years = _parse_seasons(seasons=seasons, seasons_csv=seasons_csv)
+    
+    # Check cache for player_stats (the most expensive dataset)
+    cache_key = None
+    if dataset == "player_stats":
+        cache_key = _get_cache_key(dataset, years, include_ngs, ngs_stat_type)
+        cached_df = _get_cached_df(cache_key)
+        if cached_df is not None:
+            # Apply limit/offset to cached data
+            df = cached_df
+            total_rows = len(df)
+            df = df.iloc[offset:offset + limit]
+            
+            # Convert to response format
+            if fmt == "json":
+                df = df.fillna(value=np.nan)
+                df = df.replace([np.nan, np.inf, -np.inf], None)
+                records = df.to_dict(orient="records")
+                
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                log_info(f"⚡ FAST (cached): {endpoint_path} took {elapsed_ms:.2f}ms")
+                
+                return {
+                    "library": "nflreadpy",
+                    "function": "cached",
+                    "dataset": dataset,
+                    "count": len(records),
+                    "total": total_rows,
+                    "cached": True,
+                    "data": records,
+                }
+            else:
+                # CSV format
+                csv_buffer = io.StringIO()
+                df.to_csv(csv_buffer, index=False)
+                csv_buffer.seek(0)
+                return StreamingResponse(
+                    iter([csv_buffer.getvalue()]),
+                    media_type="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={dataset}.csv"},
+                )
 
-    # Load
+    # Load from source
     try:
         df, func_name = call_dataset(mod, dataset, seasons=years or None)
     except Exception as e:  # noqa: BLE001
@@ -654,54 +1067,87 @@ def get_data(
     # Aggregate player_stats by player and season for season totals
     if dataset == "player_stats" and 'player_id' in df.columns:
         # Try to calculate routes run from PBP + Participation
-        try:
-            # Only attempt if we have seasons (to limit data load)
-            if years:
+        # NOTE: Routes are only relevant for WR/TE/RB - skip for QBs and 2025 season
+        # Check if we have any non-QB positions (routes don't apply to QBs)
+        has_non_qb_positions = False
+        if 'position' in df.columns:
+            non_qb_positions = df['position'].isin(['WR', 'TE', 'RB', 'FB'])
+            has_non_qb_positions = non_qb_positions.any()
+        
+        # Skip routes calculation if:
+        # 1. All players are QBs (routes don't apply)
+        # 2. Season is 2025 (no participation data available)
+        # 3. No position column (can't determine)
+        should_calculate_routes = (
+            has_non_qb_positions and 
+            years and 
+            any(2016 <= y <= 2024 for y in years)
+        )
+        
+        if should_calculate_routes:
+            try:
+                # Only attempt if we have seasons (to limit data load)
                 # Participation data is only available for 2016-2024 as of now
-                # Filter to only those years to avoid errors
                 participation_years = [y for y in years if 2016 <= y <= 2024]
                 
                 if participation_years:
-                    print(f"Calculating routes for seasons: {participation_years}")
+                    log_info(f"Calculating routes for seasons: {participation_years} (skipping QBs)")
                     
-                    # Load PBP (Play-by-Play) to identify pass plays
-                    pbp_df, _ = call_dataset(mod, "pbp", seasons=participation_years)
+                    with PerformanceTimer("load_pbp_for_routes", threshold_ms=10000):
+                        # Load PBP (Play-by-Play) to identify pass plays
+                        pbp_df, _ = call_dataset(mod, "pbp", seasons=participation_years)
                     # Select only needed columns to save memory
                     pbp_cols = ["game_id", "play_id", "play_type", "week", "season"]
                     pbp_df = pbp_df[[c for c in pbp_cols if c in pbp_df.columns]]
                     
-                    # Load Participation to identify players on field
-                    part_df, _ = call_dataset(mod, "participation", seasons=participation_years)
-                    part_cols = ["nflverse_game_id", "play_id", "offense_players"]
-                    part_df = part_df[[c for c in part_cols if c in part_df.columns]]
+                    with PerformanceTimer("load_participation_for_routes", threshold_ms=5000):
+                        # Load Participation to identify players on field
+                        part_df, _ = call_dataset(mod, "participation", seasons=participation_years)
+                        part_cols = ["nflverse_game_id", "play_id", "offense_players"]
+                        part_df = part_df[[c for c in part_cols if c in part_df.columns]]
+                        
+                        # Filter for pass plays
+                        pass_plays = pbp_df[pbp_df['play_type'] == 'pass']
+                        
+                        with PerformanceTimer("merge_pbp_participation", threshold_ms=10000):
+                            # Merge PBP and Participation
+                            merged = pd.merge(pass_plays, part_df, left_on=['game_id', 'play_id'], right_on=['nflverse_game_id', 'play_id'])
+                        
+                        # Explode offense_players (semicolon separated string)
+                        # Ensure it's a string before splitting
+                        merged['offense_players'] = merged['offense_players'].astype(str)
+                        merged['player_id_split'] = merged['offense_players'].str.split(';')
+                        exploded = merged.explode('player_id_split')
+                        
+                        # Count routes (pass snaps) per player per week
+                        routes_counts = exploded.groupby(['player_id_split', 'season', 'week']).size().reset_index(name='routes')
+                        routes_counts.rename(columns={'player_id_split': 'player_id'}, inplace=True)
+                        
+                        # Merge routes into main df (only for non-QB positions)
+                        # Filter main df to exclude QBs before merge
+                        non_qb_df = df[df['position'] != 'QB'].copy() if 'position' in df.columns else df.copy()
+                        if len(non_qb_df) > 0:
+                            non_qb_df = pd.merge(non_qb_df, routes_counts, on=['player_id', 'season', 'week'], how='left')
+                            non_qb_df['routes'] = non_qb_df['routes'].fillna(0)
+                            
+                            # Merge back with QB data
+                            qb_df = df[df['position'] == 'QB'].copy() if 'position' in df.columns else pd.DataFrame()
+                            if len(qb_df) > 0:
+                                qb_df['routes'] = 0  # QBs don't run routes
+                                df = pd.concat([non_qb_df, qb_df], ignore_index=True)
+                            else:
+                                df = non_qb_df
+                        else:
+                            df['routes'] = 0
+                        
+                        log_info(f"Routes calculation complete. Added routes for {len(non_qb_df)} non-QB players")
                     
-                    # Filter for pass plays
-                    pass_plays = pbp_df[pbp_df['play_type'] == 'pass']
+                    # 2. Handle seasons WITHOUT participation data (e.g. 2025)
+                    # Skip estimation for 2025 - no participation data and routes estimation is slow
+                    missing_part_years = [y for y in years if y not in participation_years and y < 2025]
                     
-                    # Merge PBP and Participation
-                    merged = pd.merge(pass_plays, part_df, left_on=['game_id', 'play_id'], right_on=['nflverse_game_id', 'play_id'])
-                    
-                    # Explode offense_players (semicolon separated string)
-                    # Ensure it's a string before splitting
-                    merged['offense_players'] = merged['offense_players'].astype(str)
-                    merged['player_id_split'] = merged['offense_players'].str.split(';')
-                    exploded = merged.explode('player_id_split')
-                    
-                    # Count routes (pass snaps) per player per week
-                    routes_counts = exploded.groupby(['player_id_split', 'season', 'week']).size().reset_index(name='routes')
-                    routes_counts.rename(columns={'player_id_split': 'player_id'}, inplace=True)
-                    
-                    # Merge routes into main df
-                    # df is weekly player stats
-                    df = pd.merge(df, routes_counts, on=['player_id', 'season', 'week'], how='left')
-                    df['routes'] = df['routes'].fillna(0)
-                    
-                    print(f"Routes calculation complete. Sample non-zero routes: {df[df['routes'] > 0]['routes'].head().tolist()}")
-                # 2. Handle seasons WITHOUT participation data (e.g. 2025)
-                missing_part_years = [y for y in years if y not in participation_years]
-                
-                if missing_part_years:
-                    print(f"Estimating routes for seasons (using Snaps * Pass Rate): {missing_part_years}")
+                    if missing_part_years and has_non_qb_positions:
+                        log_info(f"Estimating routes for seasons (using Snaps * Pass Rate): {missing_part_years}")
                     try:
                         # Load PBP for pass rate calculation
                         pbp_est, _ = call_dataset(mod, "pbp", seasons=missing_part_years)
@@ -789,34 +1235,44 @@ def get_data(
                         print(f"Estimation failed: {e}")
                         import traceback
                         traceback.print_exc()
-                
-                # Final cleanup
+                    
+                    # Final cleanup - ensure routes column exists
+                    if 'routes' not in df.columns:
+                        df['routes'] = 0
+                    else:
+                        df['routes'] = df['routes'].fillna(0)
+            except Exception as e:
+                log_error(e, {"context": "Routes calculation", "seasons": years})
+                # Don't fail the request - just set routes to 0
                 if 'routes' not in df.columns:
                     df['routes'] = 0
                 else:
                     df['routes'] = df['routes'].fillna(0)
-
-        except Exception as e:
-            print(f"Routes calculation failed: {e}")
-            import traceback
-            traceback.print_exc()
+        else:
+            # Skip routes calculation - set to 0
+            df['routes'] = 0
+            if not has_non_qb_positions:
+                log_info("Skipping routes calculation - all players are QBs or no position data")
+            elif not years or not any(2016 <= y <= 2024 for y in years):
+                log_info(f"Skipping routes calculation - no participation data for seasons: {years}")
 
         # Merge NextGen Stats if requested
         if include_ngs and dataset == "player_stats" and years:
             try:
-                log_info(f"Loading NextGen Stats (stat_type={ngs_stat_type}) for seasons: {years}")
-                
-                # Load NextGen Stats
-                ngs_df = None
-                ngs_func_name = None
-                ngs_years = years
-                
-                try:
-                    ngs_df, ngs_func_name = call_dataset(mod, "nextgen_stats", seasons=years, stat_type=ngs_stat_type)
-                    log_info(f"Loaded {len(ngs_df):,} NextGen Stats rows using {ngs_func_name}", {"rows": len(ngs_df), "function": ngs_func_name})
-                except Exception as load_err:
-                    log_error(load_err, {"context": "NextGen Stats load", "seasons": years, "stat_type": ngs_stat_type})
+                with PerformanceTimer(f"load_ngs_{ngs_stat_type}", threshold_ms=10000):
+                    log_info(f"Loading NextGen Stats (stat_type={ngs_stat_type}) for seasons: {years}")
+                    
+                    # Load NextGen Stats
                     ngs_df = None
+                    ngs_func_name = None
+                    ngs_years = years
+                    
+                    try:
+                        ngs_df, ngs_func_name = call_dataset(mod, "nextgen_stats", seasons=years, stat_type=ngs_stat_type)
+                        log_info(f"Loaded {len(ngs_df):,} NextGen Stats rows using {ngs_func_name}", {"rows": len(ngs_df), "function": ngs_func_name})
+                    except Exception as load_err:
+                        log_error(load_err, {"context": "NextGen Stats load", "seasons": years, "stat_type": ngs_stat_type})
+                        ngs_df = None
                 
                 # If no data and 2025 was requested, try 2024 as fallback
                 if (ngs_df is None or (isinstance(ngs_df, pd.DataFrame) and len(ngs_df) == 0)) and 2025 in years and 2024 not in years:
@@ -828,7 +1284,7 @@ def get_data(
                     except Exception as fallback_err:
                         log_error(fallback_err, {"context": "NextGen Stats fallback to 2024", "stat_type": ngs_stat_type})
                         ngs_df = None
-                
+                    
                 # Only proceed with merge if we have NextGen Stats data
                 if ngs_df is not None and isinstance(ngs_df, pd.DataFrame) and len(ngs_df) > 0:
                     print(f"NextGen Stats columns: {list(ngs_df.columns)[:15]}")
@@ -938,7 +1394,6 @@ def get_data(
                                 log_info(f"NextGen columns added: {ngs_cols[:5]}... (showing first 5)", {"columns": ngs_cols[:10]})
                 else:
                     log_info("Skipping NextGen Stats merge - no data available after fallback attempts")
-                            
             except Exception as e:
                 log_error(e, {"context": "NextGen Stats merge", "seasons": years, "stat_type": ngs_stat_type})
                 # Continue without NextGen Stats - don't fail the request
@@ -1110,6 +1565,12 @@ def get_data(
             if 'receiving_epa' in df.columns:
                 df['epa_per_game'] = (df['receiving_epa'].fillna(0) / games).fillna(0)
 
+    # Cache the fully processed player_stats DataFrame (before limit/offset)
+    if dataset == "player_stats" and cache_key is not None:
+        _set_cached_df(cache_key, df)
+    
+    total_rows = len(df)
+    
     # Offset and limit
     if offset:
         df = df.iloc[offset:]
@@ -1118,21 +1579,48 @@ def get_data(
 
     # Format
     if fmt == "json":
-        # Handle NaN values for JSON compliance - use fillna to preserve column names
-        df = df.fillna(value=np.nan)  # First ensure NaNs are proper
-        df = df.replace([np.nan, np.inf, -np.inf], None)  # Then replace with None
-        
+        if PERFORMANCE_MONITORING_AVAILABLE:
+            with PerformanceTimer("convert_to_json", threshold_ms=1000):
+                # Handle NaN values for JSON compliance - use fillna to preserve column names
+                df = df.fillna(value=np.nan)  # First ensure NaNs are proper
+                df = df.replace([np.nan, np.inf, -np.inf], None)  # Then replace with None
+                
+                # FastAPI will serialize this efficiently
+                records = df.to_dict(orient="records")
+        else:
+            # Handle NaN values for JSON compliance - use fillna to preserve column names
+            df = df.fillna(value=np.nan)  # First ensure NaNs are proper
+            df = df.replace([np.nan, np.inf, -np.inf], None)  # Then replace with None
+            
         # FastAPI will serialize this efficiently
         records = df.to_dict(orient="records")
-        return JSONResponse(
+        result = JSONResponse(
             content={
                 "library": mod.__name__,
                 "function": func_name,
                 "dataset": dataset,
                 "count": len(records),
+                "total": total_rows if 'total_rows' in dir() else len(records),
+                "cached": False,
                 "data": records,
             }
         )
+        
+        # Track endpoint timing
+        if PERFORMANCE_MONITORING_AVAILABLE:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            if hasattr(track_endpoint_timing, '__wrapped__'):
+                # Track in endpoint stats
+                if not hasattr(get_performance_summary, '_endpoint_timings'):
+                    get_performance_summary._endpoint_timings = {}
+                if endpoint_path not in get_performance_summary._endpoint_timings:
+                    get_performance_summary._endpoint_timings[endpoint_path] = []
+                get_performance_summary._endpoint_timings[endpoint_path].append(duration_ms)
+            
+            if duration_ms > 2000:
+                log_info(f"🐌 SLOW ENDPOINT: {endpoint_path} took {duration_ms:.2f}ms")
+        
+        return result
     # CSV streaming
     buf = io.StringIO()
     df.to_csv(buf, index=False)

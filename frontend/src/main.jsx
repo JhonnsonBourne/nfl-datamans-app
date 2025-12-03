@@ -7,6 +7,14 @@ import './index.css'
 import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import errorLogger from './utils/errorLogger.js'
+// Initialize performance profiler globally - ensures it's always available
+import './utils/performanceProfiler'
+// Initialize performance testing utilities
+// Note: initWebVitals() requires web-vitals package - install with: npm install web-vitals
+// import { initWebVitals } from './utils/performanceTesting'
+// if (import.meta.env.DEV) {
+//     initWebVitals();
+// }
 
 // Setup React Query with caching
 const queryClient = new QueryClient({

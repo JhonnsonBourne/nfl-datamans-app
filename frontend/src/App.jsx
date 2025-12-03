@@ -12,7 +12,8 @@ import { Skeleton, Box } from '@mantine/core';
 
 // Code splitting: Lazy load route components
 const Home = lazy(() => import('./pages/Home'));
-const PlayerStats = lazy(() => import('./pages/PlayerStatsTanStack'));
+// Using optimized version - switch back to PlayerStatsTanStack if needed
+const PlayerStats = lazy(() => import('./pages/PlayerStatsOptimized'));
 const PlayerProfile = lazy(() => import('./pages/PlayerProfile'));
 const PlayerComparison = lazy(() => import('./pages/PlayerComparison'));
 const Leaderboards = lazy(() => import('./pages/Leaderboards'));

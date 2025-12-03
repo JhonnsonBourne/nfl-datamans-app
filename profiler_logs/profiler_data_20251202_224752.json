@@ -1,0 +1,37 @@
+{
+  "componentName": "PlayerStats",
+  "renderHistory": [],
+  "functionCalls": {},
+  "blockingDetections": [
+    {
+      "timestamp": 575.7999999970198,
+      "delay": 284.59999999403954,
+      "stackTrace": "Error\n    at checkHeartbeat (http://localhost:5173/src/utils/performanceProfiler.js?t=1764733459945:230:36)",
+      "renderHistory": [],
+      "functionStats": {}
+    }
+  ],
+  "suspiciousPatterns": [],
+  "summary": {
+    "componentName": "PlayerStats",
+    "totalRenders": 0,
+    "avgTimeBetweenRenders": 0,
+    "blockingDetections": 1,
+    "suspiciousPatterns": 0,
+    "functionStats": {},
+    "memoryUsage": {
+      "used": 63248246,
+      "total": 74507194,
+      "limit": 4294705152
+    },
+    "recentRenders": []
+  },
+  "blockingInfo": {
+    "timestamp": 575.7999999970198,
+    "delay": 284.59999999403954,
+    "stackTrace": "Error\n    at checkHeartbeat (http://localhost:5173/src/utils/performanceProfiler.js?t=1764733459945:230:36)",
+    "renderHistory": [],
+    "functionStats": {}
+  },
+  "timestamp": "2025-12-03T03:47:52.129Z"
+}

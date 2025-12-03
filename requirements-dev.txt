@@ -1,0 +1,24 @@
+# Development and testing dependencies
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.5.0
+pre-commit>=3.4.0
+
+# Data engineering tools
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+pandas>=2.0.0
+
+# Monitoring and observability
+prometheus-client>=0.18.0
+
+# dbt development
+dbt-core>=1.6.0
+dbt-postgres>=1.6.0
+dbt-utils>=1.1.0
+
+# Airflow development
+apache-airflow>=2.7.0

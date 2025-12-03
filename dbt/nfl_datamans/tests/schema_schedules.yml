@@ -1,0 +1,14 @@
+version: 2
+
+models:
+  - name: stg_schedules
+    description: "Staging view over raw_nfl.schedules from nflverse."
+    columns:
+      - name: season
+        description: "Season year."
+        tests:
+          - not_null
+      - name: week
+        description: "Week number within the season."
+        tests:
+          - not_null

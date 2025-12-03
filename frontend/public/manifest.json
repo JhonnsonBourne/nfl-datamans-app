@@ -1,0 +1,43 @@
+{
+  "name": "NFL DataMans App",
+  "short_name": "NFL Data",
+  "description": "Comprehensive NFL statistics and analytics platform",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1a365d",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["sports", "entertainment"],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Player Stats",
+      "short_name": "Stats",
+      "description": "View player statistics",
+      "url": "/player-stats",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Leaderboards",
+      "short_name": "Leaders",
+      "description": "View leaderboards",
+      "url": "/leaderboards",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
+

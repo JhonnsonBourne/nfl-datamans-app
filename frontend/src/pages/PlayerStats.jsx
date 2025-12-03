@@ -1,11 +1,31 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, memo } from 'react';
+import PerformanceProfiler, { trackCall, getOrCreateProfiler } from '../utils/performanceProfiler';
 import { Link } from 'react-router-dom';
 import { getPlayerStats, reportError } from '../services/api';
 import { TableSkeleton, FilterSkeleton, Spinner } from '../components/LoadingSkeleton';
 import { NoResultsState, ErrorState } from '../components/EmptyState';
 import { useToast } from '../components/Toast';
 
-export default function PlayerStats() {
+// Maximum rows to render at once to prevent UI freeze
+const MAX_VISIBLE_ROWS = 200;
+
+// Performance logging utility
+const perfLog = (label, fn) => {
+    const start = performance.now();
+    const result = fn();
+    const duration = performance.now() - start;
+    if (duration > 10) { // Only log slow operations (>10ms)
+        console.log(`⏱️ [PERF] ${label}: ${duration.toFixed(2)}ms`);
+    }
+    return result;
+};
+
+// Debug logging utility
+const debugLog = (label, data) => {
+    console.log(`🔍 [DEBUG] ${label}:`, data);
+};
+
+function PlayerStats() {
     const [allData, setAllData] = useState([]);
     const [filteredData, setFilteredData] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -18,11 +38,179 @@ export default function PlayerStats() {
     const [visibleColumns, setVisibleColumns] = useState(new Set());
     const [showDebug, setShowDebug] = useState(false);
     const [tableDimensions, setTableDimensions] = useState({ tableWidth: 0, containerWidth: 0 });
+    const [visibleRowCount, setVisibleRowCount] = useState(MAX_VISIBLE_ROWS);
     const tableContainerRef = useRef(null);
     const { showToast, ToastContainer } = useToast();
+    
+    // Track render count for debugging
+    const renderCountRef = useRef(0);
+    const lastRenderTimeRef = useRef(Date.now());
+    
+    // Debug log storage (accessible via window object for debugging)
+    const debugLogsRef = useRef([]);
+    const cellValueCacheRef = useRef(new Map()); // Declare early for debug API
+    
+    // Performance profiler for analyzing hangs - use global helper
+    const profilerRef = useRef(null);
+    
+    // Get or create profiler - this ensures it's always available globally
+    if (typeof window !== 'undefined') {
+        profilerRef.current = getOrCreateProfiler('PlayerStats');
+    }
+    
+    useEffect(() => {
+        // Ensure profiler stays active
+        if (profilerRef.current && !profilerRef.current.isProfiling) {
+            profilerRef.current.start();
+        }
+        return () => {
+            // Don't stop profiler on unmount - keep it for debugging
+        };
+    }, []);
+    
+    // Expose debug API to window immediately (before component fully mounts)
+    if (typeof window !== 'undefined' && !window.__playerStatsDebug) {
+        window.__playerStatsDebug = {
+            getLogs: () => debugLogsRef.current,
+            clearLogs: () => { debugLogsRef.current = []; },
+            getState: () => ({
+                allDataLength: allData.length,
+                filteredDataLength: filteredData.length,
+                selectedPosition,
+                minThreshold,
+                visibleRowCount,
+                renderCount: renderCountRef.current,
+                cacheSize: cellValueCacheRef.current.size
+            }),
+            addLog: (level, message, data = {}) => {
+                const entry = {
+                    timestamp: Date.now(),
+                    level,
+                    message,
+                    data,
+                    renderCount: renderCountRef.current
+                };
+                debugLogsRef.current.push(entry);
+                if (debugLogsRef.current.length > 100) {
+                    debugLogsRef.current.shift();
+                }
+                console[level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log'](`[${level.toUpperCase()}] ${message}`, data);
+            },
+            // Performance profiler methods - use direct access to ensure it works
+            getProfilerSummary: () => {
+                const profiler = profilerRef.current || window.__performanceProfiler?.PlayerStats;
+                return profiler?.getSummary() || null;
+            },
+            getProfilerReport: () => {
+                const profiler = profilerRef.current || window.__performanceProfiler?.PlayerStats;
+                return profiler?.getDetailedReport() || null;
+            },
+            exportProfilerData: () => {
+                const profiler = profilerRef.current || window.__performanceProfiler?.PlayerStats;
+                if (profiler) {
+                    return profiler.exportData();
+                } else {
+                    console.error('Profiler not available. Make sure the component has mounted.');
+                    return null;
+                }
+            },
+            clearProfilerData: () => {
+                const profiler = profilerRef.current || window.__performanceProfiler?.PlayerStats;
+                return profiler?.clear() || null;
+            },
+        };
+        console.log('🚀 [PLAYER_STATS] Debug API initialized at window.__playerStatsDebug');
+        console.log('📊 [PROFILER] Performance profiler available:');
+        console.log('   - window.__playerStatsDebug.getProfilerSummary()');
+        console.log('   - window.__playerStatsDebug.getProfilerReport()');
+        console.log('   - window.__playerStatsDebug.exportProfilerData()');
+        console.log('   - window.__performanceProfiler.PlayerStats (direct access)');
+    }
+    
+    const profiler = profilerRef.current;
+    
+    // Update debug API state on each render
+    useEffect(() => {
+        if (window.__playerStatsDebug) {
+            window.__playerStatsDebug.getState = () => ({
+                allDataLength: allData.length,
+                filteredDataLength: filteredData.length,
+                selectedPosition,
+                minThreshold,
+                visibleRowCount,
+                renderCount: renderCountRef.current,
+                cacheSize: cellValueCacheRef.current.size
+            });
+            // Ensure profiler is accessible
+            if (profilerRef.current && !window.__performanceProfiler?.PlayerStats) {
+                if (!window.__performanceProfiler) {
+                    window.__performanceProfiler = {};
+                }
+                window.__performanceProfiler.PlayerStats = profilerRef.current;
+            }
+        }
+    });
+    
+    // Track renders and detect rapid re-renders
+    useEffect(() => {
+        // Get profiler instance (may not be available on first render)
+        const currentProfiler = profilerRef.current || window.__performanceProfiler?.PlayerStats;
+        
+        if (currentProfiler) {
+            currentProfiler.markRenderStart();
+        }
+        
+        renderCountRef.current += 1;
+        const now = Date.now();
+        const timeSinceLastRender = now - lastRenderTimeRef.current;
+        lastRenderTimeRef.current = now;
+        
+        // Track render with profiler
+        if (currentProfiler) {
+            currentProfiler.trackRender(renderCountRef.current, {
+                selectedPosition,
+                selectedSeason,
+                minThreshold,
+                visibleRowCount,
+                allDataLength: allData.length,
+                filteredDataLength: filteredData.length,
+                sortedDataLength: sortedData?.length || 0,
+                columnsCount: columns.length,
+                cacheSize: cellValueCacheRef.current.size,
+            });
+        }
+        
+        if (timeSinceLastRender < 50 && renderCountRef.current > 5) {
+            console.warn(`⚠️ [RENDER] Rapid re-renders detected! Render #${renderCountRef.current} (${timeSinceLastRender}ms since last)`);
+        }
+    });
 
     // Default sort to fantasy_points_ppr for 'ALL', will be updated by useEffect when position changes
     const [sortConfig, setSortConfig] = useState({ key: 'fantasy_points_ppr', direction: 'desc' });
+    
+    // Log render (throttled to avoid spam)
+    // FIXED: Added proper dependencies to avoid referencing undefined variables
+    useEffect(() => {
+        const timeSinceLastRender = Date.now() - lastRenderTimeRef.current;
+        // Always log first few renders to confirm logging is working
+        if (renderCountRef.current <= 3 || renderCountRef.current % 5 === 0 || timeSinceLastRender > 100) {
+            console.log(`🔄 [RENDER] Render #${renderCountRef.current}`, {
+                allDataLength: allData.length,
+                filteredDataLength: filteredData.length,
+                selectedPosition,
+                minThreshold,
+                visibleRowCount,
+                timeSinceLastRender: `${timeSinceLastRender}ms`,
+                totalRenderCellValueCalls: renderCellValueCallCount.current
+            });
+            
+            // Reset counter periodically to avoid overflow
+            if (renderCellValueCallCount.current > 10000) {
+                console.log(`  🔄 Resetting renderCellValue call counter`);
+                renderCellValueCallCount.current = 0;
+            }
+        }
+    }, [allData.length, filteredData.length, selectedPosition, minThreshold, visibleRowCount]);
 
     // Helper functions defined before useMemo hooks to avoid ReferenceError
     const getThresholdMetric = (position) => {
@@ -36,14 +224,15 @@ export default function PlayerStats() {
     };
 
     // Check if NextGen Stats columns are available in the data
-    // Check all players, not just the first one (first might not be WR/TE)
+    // OPTIMIZED: Only check first 10 players to avoid expensive iteration
     const hasNextGenStats = useMemo(() => {
         if (allData.length === 0) return false;
-        // Check if any player has NextGen Stats columns
-        return allData.some(player => 
+        // Check first few players only (much faster than checking all 1800+)
+        const sampleSize = Math.min(10, allData.length);
+        return allData.slice(0, sampleSize).some(player => 
             Object.keys(player).some(key => key.startsWith('ngs_'))
         );
-    }, [allData]);
+    }, [allData.length]); // Only depend on length, not the entire array
 
     const getColumnsForPosition = (position) => {
         const base = [
@@ -161,26 +350,21 @@ export default function PlayerStats() {
         }
 
         // Default columns for other positions
-        // For "ALL" position, show NextGen Stats if available and we have WR/TE players
+        // For "ALL" position, show NextGen Stats if available
+        // FIXED: Removed allData dependency - use hasNextGenStats boolean instead
         if (position === 'ALL' && hasNextGenStats) {
-            // Check if we have any WR/TE players with NextGen Stats
-            const hasWrTeWithNgs = allData.some(p => 
-                (p.position === 'WR' || p.position === 'TE') && 
-                Object.keys(p).some(key => key.startsWith('ngs_'))
-            );
-            
-            if (hasWrTeWithNgs) {
-                return [
-                    ...base,
-                    // Add NextGen Stats columns for ALL view when WR/TE players are present
-                    { k: 'ngs_avg_separation', l: 'Separation', a: 'right', tooltip: 'Avg separation at catch (yards)' },
-                    { k: 'ngs_avg_cushion', l: 'Cushion', a: 'right', tooltip: 'Avg starting cushion (yards)' },
-                    { k: 'ngs_avg_intended_air_yards', l: 'Int Air Yds', a: 'right', tooltip: 'Avg intended air yards per target' },
-                    { k: 'ngs_avg_yac_above_expectation', l: 'YAC+', a: 'right', tooltip: 'YAC above/below expectation', h: true },
-                    { k: 'ngs_avg_yac', l: 'YAC Avg', a: 'right', tooltip: 'Average yards after catch' },
-                    { k: 'ngs_percent_share_of_intended_air_yards', l: 'Air Share%', a: 'right', tooltip: 'Share of team intended air yards' }
-                ];
-            }
+            // If hasNextGenStats is true, we know NGS data exists
+            // No need to iterate through allData again
+            return [
+                ...base,
+                // Add NextGen Stats columns for ALL view when NextGen Stats are available
+                { k: 'ngs_avg_separation', l: 'Separation', a: 'right', tooltip: 'Avg separation at catch (yards)' },
+                { k: 'ngs_avg_cushion', l: 'Cushion', a: 'right', tooltip: 'Avg starting cushion (yards)' },
+                { k: 'ngs_avg_intended_air_yards', l: 'Int Air Yds', a: 'right', tooltip: 'Avg intended air yards per target' },
+                { k: 'ngs_avg_yac_above_expectation', l: 'YAC+', a: 'right', tooltip: 'YAC above/below expectation', h: true },
+                { k: 'ngs_avg_yac', l: 'YAC Avg', a: 'right', tooltip: 'Average yards after catch' },
+                { k: 'ngs_percent_share_of_intended_air_yards', l: 'Air Share%', a: 'right', tooltip: 'Share of team intended air yards' }
+            ];
         }
         
         return [
@@ -188,7 +372,32 @@ export default function PlayerStats() {
         ];
     };
 
+    // Track renderCellValue calls for performance debugging
+    const renderCellValueCallCount = useRef(0);
+    const renderCellValueCallLog = useRef([]);
+    
     const renderCellValue = (player, col) => {
+        renderCellValueCallCount.current += 1;
+        
+        // Track function call with profiler
+        const currentProfiler = profilerRef.current || window.__performanceProfiler?.PlayerStats;
+        if (currentProfiler) {
+            return trackCall(currentProfiler, 'renderCellValue', () => {
+                return renderCellValueImpl(player, col);
+            }, { column: col.k });
+        } else {
+            // Fallback if profiler not available
+            return renderCellValueImpl(player, col);
+        }
+    };
+    
+    const renderCellValueImpl = (player, col) => {
+        
+        // Log if we're calling this excessively
+        if (renderCellValueCallCount.current % 1000 === 0) {
+            console.warn(`⚠️ [RENDER_CELL_VALUE] Called ${renderCellValueCallCount.current} times`);
+        }
+        
         // Access player name fields safely
         if (col.k === 'player') return player.player_name || player.player_display_name || player.player || 'Unknown';
         if (col.k === 'team') return player.recent_team || player.team || '-';
@@ -255,8 +464,9 @@ export default function PlayerStats() {
         return player[col.k] || 0;
     };
 
-    const renderCell = (player, col) => {
-        const value = renderCellValue(player, col);
+    const renderCell = (player, col, preCalculatedValue = null) => {
+        // CRITICAL FIX: Use pre-calculated value if provided to avoid duplicate renderCellValue calls
+        const value = preCalculatedValue !== null ? preCalculatedValue : renderCellValue(player, col);
         if (typeof value === 'string') return value;
         if (value === null || value === undefined) return '-';
         if (col.k === 'games') return value;
@@ -323,27 +533,103 @@ export default function PlayerStats() {
     };
 
     const sortedData = useMemo(() => {
-        if (!sortConfig.key) return filteredData;
-
-        return [...filteredData].sort((a, b) => {
-            const aVal = renderCellValue(a, { k: sortConfig.key });
-            const bVal = renderCellValue(b, { k: sortConfig.key });
-
-            const aStr = String(aVal).replace(/[^0-9.-]/g, '');
-            const bStr = String(bVal).replace(/[^0-9.-]/g, '');
-            const aNum = parseFloat(aStr);
-            const bNum = parseFloat(bStr);
-
-            const aFinal = isNaN(aNum) ? aVal : aNum;
-            const bFinal = isNaN(bNum) ? bVal : bNum;
-
-            if (aFinal < bFinal) return sortConfig.direction === 'asc' ? -1 : 1;
-            if (aFinal > bFinal) return sortConfig.direction === 'asc' ? 1 : -1;
-            return 0;
+        const startTime = performance.now();
+        const beforeCallCount = renderCellValueCallCount.current;
+        
+        // Track this operation with profiler - ALWAYS log to console for debugging
+        const profiler = profilerRef.current || window.__performanceProfiler?.PlayerStats;
+        console.log(`🔀 [SORT] Starting sort - Profiler available: ${!!profiler}`, {
+            filteredDataLength: filteredData.length,
+            sortKey: sortConfig.key,
+            sortDirection: sortConfig.direction,
+            profilerExists: !!profiler
         });
+        
+        if (profiler) {
+            profiler.markRenderStart();
+        } else {
+            console.warn('⚠️ [SORT] Profiler not available!');
+        }
+        
+        if (!sortConfig.key) {
+            console.log(`  ⏭️  No sort key, returning filteredData`);
+            return filteredData;
+        }
+
+        const result = perfLog(`Sort ${filteredData.length} rows by ${sortConfig.key}`, () => {
+            // Optimize: Try direct property access first (much faster)
+            const sortKey = sortConfig.key;
+            const hasDirectAccess = filteredData.length > 0 && sortKey in filteredData[0];
+            
+            if (hasDirectAccess) {
+                // Direct property access - much faster!
+                return [...filteredData].sort((a, b) => {
+                    const aVal = a[sortKey] ?? 0;
+                    const bVal = b[sortKey] ?? 0;
+                    
+                    const aNum = typeof aVal === 'number' ? aVal : parseFloat(String(aVal).replace(/[^0-9.-]/g, '')) || 0;
+                    const bNum = typeof bVal === 'number' ? bVal : parseFloat(String(bVal).replace(/[^0-9.-]/g, '')) || 0;
+
+                    if (aNum < bNum) return sortConfig.direction === 'asc' ? -1 : 1;
+                    if (aNum > bNum) return sortConfig.direction === 'asc' ? 1 : -1;
+                    return 0;
+                });
+            } else {
+                // CRITICAL FIX: Pre-calculate sort values BEFORE sorting to avoid calling renderCellValue thousands of times
+                // Sort algorithm does O(n log n) comparisons, so without pre-calculation we'd call renderCellValue O(n log n) times
+                // With pre-calculation, we only call it O(n) times (once per row)
+                const dataWithSortValues = filteredData.map(item => ({
+                    item,
+                    sortValue: (() => {
+                        const val = renderCellValue(item, { k: sortConfig.key });
+                        const str = String(val).replace(/[^0-9.-]/g, '');
+                        const num = parseFloat(str);
+                        return isNaN(num) ? val : num;
+                    })()
+                }));
+                
+                // Now sort by pre-calculated values (much faster!)
+                dataWithSortValues.sort((a, b) => {
+                    if (a.sortValue < b.sortValue) return sortConfig.direction === 'asc' ? -1 : 1;
+                    if (a.sortValue > b.sortValue) return sortConfig.direction === 'asc' ? 1 : -1;
+                    return 0;
+                });
+                
+                // Extract original items
+                return dataWithSortValues.map(entry => entry.item);
+            }
+        });
+        
+        const duration = performance.now() - startTime;
+        const callsMade = renderCellValueCallCount.current - beforeCallCount;
+        console.log(`✅ [SORT] Complete: ${result.length} rows in ${duration.toFixed(2)}ms (${callsMade} renderCellValue calls)`);
+        
+        // Track this operation with profiler - ALWAYS log timing
+        const profilerAfter = profilerRef.current || window.__performanceProfiler?.PlayerStats;
+        if (profilerAfter) {
+            profilerAfter.trackFunctionCall('sortedData_useMemo', duration, {
+                rowCount: filteredData.length,
+                sortKey: sortConfig.key,
+                callsMade
+            });
+            console.log(`📊 [SORT] Tracked with profiler: ${duration.toFixed(2)}ms`);
+        } else {
+            console.warn(`⚠️ [SORT] Profiler not available after sort!`);
+        }
+        
+        // Warn if this took too long - CRITICAL for debugging
+        if (duration > 100) {
+            console.error(`🚨 [SORT] SLOW OPERATION: ${duration.toFixed(2)}ms - ${filteredData.length} rows, ${callsMade} renderCellValue calls`);
+            // Also log to window for easy access
+            if (typeof window !== 'undefined') {
+                window.__lastSlowSort = { duration, rows: filteredData.length, calls: callsMade, timestamp: Date.now() };
+            }
+        }
+        
+        return result;
     }, [filteredData, sortConfig]);
 
-    const allColumns = useMemo(() => getColumnsForPosition(selectedPosition), [selectedPosition, hasNextGenStats, allData]);
+    const allColumns = useMemo(() => getColumnsForPosition(selectedPosition), [selectedPosition, hasNextGenStats]);
     
     // Group columns into categories
     const columnCategories = useMemo(() => {
@@ -379,6 +665,7 @@ export default function PlayerStats() {
     }, [allColumns]);
     
     // Initialize visible columns on mount or position change
+    // CRITICAL FIX: Only update if columns actually changed to prevent infinite loops
     useEffect(() => {
         // Reset visibility when position or columns change
         const defaultVisible = new Set();
@@ -397,7 +684,16 @@ export default function PlayerStats() {
                 defaultVisible.add(col.k);
             }
         });
-        setVisibleColumns(defaultVisible);
+        
+        // CRITICAL: Only update if the Set contents actually changed
+        // Compare sizes and contents to prevent unnecessary updates
+        const currentKeys = Array.from(visibleColumns).sort().join(',');
+        const newKeys = Array.from(defaultVisible).sort().join(',');
+        
+        if (currentKeys !== newKeys) {
+            console.log(`📋 [VISIBLE_COLUMNS] Updating: ${visibleColumns.size} → ${defaultVisible.size} columns`);
+            setVisibleColumns(defaultVisible);
+        }
     }, [selectedPosition, allColumns.length]); // Reset when position or column count changes
     
     // Filter columns based on visibility
@@ -409,10 +705,14 @@ export default function PlayerStats() {
         return allColumns.filter(col => visibleColumns.has(col.k));
     }, [allColumns, visibleColumns]);
     
-    // Measure table dimensions (only when dimensions change)
+    // Measure table dimensions (only when actually rendered)
+    // OPTIMIZED: Use requestAnimationFrame to avoid blocking, and only measure when table is visible
     useEffect(() => {
-        if (tableContainerRef.current && sortedData.length > 0) {
-            const table = tableContainerRef.current.querySelector('table');
+        if (!tableContainerRef.current || sortedData.length === 0) return;
+        
+        // Use requestAnimationFrame to avoid blocking the main thread
+        const rafId = requestAnimationFrame(() => {
+            const table = tableContainerRef.current?.querySelector('table');
             if (table) {
                 const dims = {
                     tableWidth: table.offsetWidth,
@@ -431,30 +731,205 @@ export default function PlayerStats() {
                     return prev;
                 });
             }
-        }
-    }, [columns.length, sortedData.length, showDebug]);
+        });
+        
+        return () => cancelAnimationFrame(rafId);
+    }, [columns.length, visibleRowCount, showDebug]); // Removed sortedData.length - only measure when columns/visible rows change
 
     // Calculate min/max for each column for color gradients
+    // OPTIMIZED: Only calculate for visible columns and limit to first 100 rows for performance
     const columnRanges = useMemo(() => {
-        const ranges = {};
-
-        columns.forEach(col => {
-            if (col.k === 'player' || col.k === 'team' || col.k === 'position') return;
-
-            const values = sortedData.map(p => {
-                const val = renderCellValue(p, col);
-                return typeof val === 'number' ? val : null;
-            }).filter(v => v !== null && !isNaN(v));
-
-            if (values.length > 0) {
-                ranges[col.k] = {
-                    min: Math.min(...values),
-                    max: Math.max(...values)
-                };
-            }
+        const startTime = performance.now();
+        const profiler = profilerRef.current || window.__performanceProfiler?.PlayerStats;
+        
+        console.log(`📊 [COLUMN_RANGES] Starting calculation`, {
+            sortedDataLength: sortedData.length,
+            columnsCount: columns.length
         });
+        
+        // Track start with profiler
+        if (profiler) {
+            profiler.markRenderStart();
+        }
+        
+        const ranges = {};
+        
+        // Skip calculation if too much data - prevents UI freeze
+        if (sortedData.length > 500) {
+            // For large datasets, sample first 100 rows for range calculation
+            const sampleData = sortedData.slice(0, 100);
+            console.log(`  📉 Using sample: ${sampleData.length} rows (from ${sortedData.length})`);
+            
+            columns.forEach(col => {
+                if (col.k === 'player' || col.k === 'team' || col.k === 'position') return;
+                
+                // Direct property access is much faster than renderCellValue
+                const values = sampleData
+                    .map(p => p[col.k])
+                    .filter(v => typeof v === 'number' && !isNaN(v));
+
+                if (values.length > 0) {
+                    ranges[col.k] = {
+                        min: Math.min(...values),
+                        max: Math.max(...values)
+                    };
+                }
+            });
+        } else {
+            console.log(`  📈 Using full dataset: ${sortedData.length} rows`);
+            // CRITICAL FIX: Always use direct property access, never renderCellValue
+            // renderCellValue is expensive and called thousands of times otherwise
+            columns.forEach(col => {
+                if (col.k === 'player' || col.k === 'team' || col.k === 'position') return;
+
+                // Direct property access - MUCH faster than renderCellValue
+                const values = sortedData
+                    .map(p => {
+                        // Try direct property first (fastest)
+                        let val = p[col.k];
+                        
+                        // For calculated fields, use simple direct access
+                        // Don't call renderCellValue - it's too expensive
+                        if (val === undefined || val === null) {
+                            // Only handle common calculated fields with simple logic
+                            if (col.k === 'completion_percentage') {
+                                val = p.completions && p.attempts ? (p.completions / p.attempts) * 100 : null;
+                            } else if (col.k === 'yards_per_attempt') {
+                                val = p.passing_yards && p.attempts ? p.passing_yards / p.attempts : null;
+                            } else if (col.k === 'yards_per_carry') {
+                                val = p.rushing_yards && p.carries ? p.rushing_yards / p.carries : null;
+                            } else if (col.k === 'yards_per_reception') {
+                                val = p.receiving_yards && p.receptions ? p.receiving_yards / p.receptions : null;
+                            } else {
+                                val = null; // Skip complex calculations for range calculation
+                            }
+                        }
+                        
+                        return typeof val === 'number' && !isNaN(val) ? val : null;
+                    })
+                    .filter(v => v !== null);
+
+                if (values.length > 0) {
+                    ranges[col.k] = {
+                        min: Math.min(...values),
+                        max: Math.max(...values)
+                    };
+                }
+            });
+        }
+        
+        const duration = performance.now() - startTime;
+        console.log(`✅ [COLUMN_RANGES] Complete: ${Object.keys(ranges).length} columns in ${duration.toFixed(2)}ms`);
+        
+        // Track this operation with profiler
+        if (profiler) {
+            profiler.trackFunctionCall('columnRanges_useMemo', duration, {
+                rowCount: sortedData.length,
+                columnCount: columns.length,
+                rangesCalculated: Object.keys(ranges).length
+            });
+        }
+        
+        // Warn if this took too long
+        if (duration > 500) {
+            console.error(`🚨 [COLUMN_RANGES] TOO SLOW: ${duration.toFixed(2)}ms - this is blocking the UI!`);
+        }
+        
         return ranges;
     }, [sortedData, columns]);
+
+    // CRITICAL FIX: Memoize cell values to prevent recalculating on every render
+    // AGGRESSIVE OPTIMIZATION: Use ref to persist cache across renders and only update when data actually changes
+    // Note: cellValueCacheRef declared earlier for debug API access
+    const lastCacheKeyRef = useRef('');
+    
+    // Create stable cache key - Use allColumnsKey which only changes when column count changes
+    const columnKeys = allColumnsKey;
+    
+    const sortedDataKey = useMemo(() => {
+        if (sortedData.length === 0) return 'empty';
+        const first = sortedData[0]?.player_id || sortedData[0]?.player_name || '0';
+        const last = sortedData[sortedData.length - 1]?.player_id || sortedData[sortedData.length - 1]?.player_name || '0';
+        return `${sortedData.length}-${first}-${last}`;
+    }, [sortedData.length, sortedData[0]?.player_id, sortedData[sortedData.length - 1]?.player_id]);
+    
+    const cacheKey = `${sortedDataKey}-${columnKeys}-${visibleRowCount}`;
+    
+    // CRITICAL FIX: Don't build cache synchronously - it blocks the UI thread!
+    // Use state + useEffect to build cache asynchronously
+    const [cellValueCache, setCellValueCache] = useState(new Map());
+    
+    useEffect(() => {
+        // If cache key hasn't changed, keep existing cache
+        if (cacheKey === lastCacheKeyRef.current && cellValueCacheRef.current.size > 0) {
+            return; // Don't rebuild
+        }
+        
+        // CRITICAL: Limit cache size to prevent UI freeze
+        const maxRows = Math.min(visibleRowCount, 50); // Reduced to 50 rows max
+        const rowsToCache = sortedData.slice(0, maxRows);
+        const totalCells = rowsToCache.length * columns.length;
+        
+        // If too many cells, skip caching entirely and calculate on-demand
+        if (totalCells > 1000) {
+            console.warn(`⚠️ [CELL_CACHE] Too many cells (${totalCells}), skipping cache to prevent freeze`);
+            setCellValueCache(new Map()); // Empty cache - will calculate on-demand
+            cellValueCacheRef.current = new Map();
+            lastCacheKeyRef.current = cacheKey;
+            return;
+        }
+        
+        console.log(`💾 [CELL_CACHE] Building cache for ${rowsToCache.length} rows × ${columns.length} cols (${totalCells} cells)...`);
+        
+        // Build cache asynchronously using setTimeout to break up work
+        const buildCacheAsync = () => {
+            const startTime = performance.now();
+            const cache = new Map();
+            let processed = 0;
+            const batchSize = 25; // Process 25 cells per batch
+            
+            const processBatch = () => {
+                const endIdx = Math.min(processed + batchSize, totalCells);
+                
+                while (processed < endIdx) {
+                    const rowIdx = Math.floor(processed / columns.length);
+                    const colIdx = processed % columns.length;
+                    
+                    if (rowIdx >= rowsToCache.length) break;
+                    
+                    const player = rowsToCache[rowIdx];
+                    const col = columns[colIdx];
+                    const playerKey = player.player_id || player.player_name || `row-${rowIdx}`;
+                    // CRITICAL: Match the cache key format used in render loop (with dash)
+                    const cellCacheKey = `${playerKey}-${col.k}`;
+                    
+                    if (!cache.has(cellCacheKey)) {
+                        cache.set(cellCacheKey, renderCellValue(player, col));
+                    }
+                    
+                    processed++;
+                }
+                
+                if (processed < totalCells) {
+                    // Schedule next batch (yield to browser)
+                    setTimeout(processBatch, 0);
+                } else {
+                    // Done building cache
+                    cellValueCacheRef.current = cache;
+                    lastCacheKeyRef.current = cacheKey;
+                    setCellValueCache(cache);
+                    
+                    const duration = performance.now() - startTime;
+                    console.log(`💾 [CELL_CACHE] Built cache: ${cache.size} values in ${duration.toFixed(2)}ms`);
+                }
+            };
+            
+            // Start processing
+            setTimeout(processBatch, 0);
+        };
+        
+        buildCacheAsync();
+    }, [cacheKey, sortedData.length, columns.length, visibleRowCount, renderCellValue]);
 
     // Get color gradient for a cell
     const getColorGradient = (value, min, max, columnKey) => {
@@ -478,18 +953,43 @@ export default function PlayerStats() {
     };
 
     const loadData = async () => {
+        const startTime = performance.now();
+        console.log(`📥 [LOAD_DATA] Starting data load`, {
+            selectedSeason,
+            includeNgs,
+            selectedPosition
+        });
+        
         try {
             setLoading(true);
             // Only include NextGen Stats for WR/TE positions
             const shouldIncludeNgs = includeNgs && (selectedPosition === 'WR' || selectedPosition === 'TE' || selectedPosition === 'ALL');
-            const result = await getPlayerStats([selectedSeason], 10000, shouldIncludeNgs, 'receiving');
+            console.log(`  → Fetching data with includeNgs=${shouldIncludeNgs}`);
+            
+            // CRITICAL FIX: Use position-based limits instead of fetching 10,000 players
+            // Fetching 10,000 players causes UI freeze when processing/sorting/filtering
+            // Use reasonable limits based on position (similar to PlayerStatsOptimized)
+            let limit = 2000; // Default for ALL
+            if (selectedPosition === 'QB') limit = 200;
+            else if (selectedPosition === 'RB') limit = 400;
+            else if (selectedPosition === 'WR') limit = 600;
+            else if (selectedPosition === 'TE') limit = 300;
+            
+            console.log(`  → Using limit: ${limit} (position: ${selectedPosition})`);
+            
+            const fetchStart = performance.now();
+            const result = await getPlayerStats([selectedSeason], limit, shouldIncludeNgs, 'receiving');
+            const fetchDuration = performance.now() - fetchStart;
+            
+            console.log(`  ✓ Fetch complete: ${result.data?.length || 0} players in ${fetchDuration.toFixed(2)}ms`);
+            
             setAllData(result.data || []);
             
             // Debug: Check if NextGen Stats are in the response
             if (shouldIncludeNgs && result.data && result.data.length > 0) {
                 const samplePlayer = result.data[0];
                 const ngsKeys = Object.keys(samplePlayer).filter(key => key.startsWith('ngs_'));
-                console.log('NextGen Stats check:', {
+                console.log('  📊 NextGen Stats check:', {
                     shouldIncludeNgs,
                     totalPlayers: result.data.length,
                     samplePlayerKeys: Object.keys(samplePlayer).slice(0, 10),
@@ -499,9 +999,13 @@ export default function PlayerStats() {
             }
             
             setError(null);
+            
+            const totalDuration = performance.now() - startTime;
+            console.log(`✅ [LOAD_DATA] Complete in ${totalDuration.toFixed(2)}ms`);
         } catch (err) {
+            const duration = performance.now() - startTime;
+            console.error(`❌ [LOAD_DATA] Error after ${duration.toFixed(2)}ms:`, err);
             setError(err.message);
-            console.error('Error loading data:', err);
             // Report error to backend for debugging
             reportError(err, {
                 component: 'PlayerStats',
@@ -515,32 +1019,75 @@ export default function PlayerStats() {
         }
     };
 
-    const filterByPosition = () => {
+    // Memoize filterByPosition to prevent recreation on every render
+    const filterByPosition = useCallback(() => {
+        const startTime = performance.now();
+        const profiler = profilerRef.current || window.__performanceProfiler?.PlayerStats;
+        
+        console.log(`🔍 [FILTER] Starting filter`, {
+            allDataLength: allData.length,
+            selectedPosition,
+            minThreshold
+        });
+        
+        // Track start with profiler
+        if (profiler) {
+            profiler.markRenderStart();
+        }
+        
         let data = allData;
 
         // 1. Filter by Position
         if (selectedPosition !== 'ALL') {
-            data = data.filter(p => p.position === selectedPosition);
+            const beforePos = data.length;
+            data = perfLog(`Filter by position (${selectedPosition})`, () => 
+                data.filter(p => p.position === selectedPosition)
+            );
+            console.log(`  ✓ Position filter: ${beforePos} → ${data.length} rows`);
         }
 
         // 2. Filter by Minimum Threshold
         const thresholdMetric = getThresholdMetric(selectedPosition);
         if (minThreshold > 0) {
-            data = data.filter(p => {
-                const val = p[thresholdMetric.key] || 0;
-                return val >= minThreshold;
-            });
+            const beforeThresh = data.length;
+            data = perfLog(`Filter by threshold (${thresholdMetric.key} >= ${minThreshold})`, () =>
+                data.filter(p => {
+                    const val = p[thresholdMetric.key] || 0;
+                    return val >= minThreshold;
+                })
+            );
+            console.log(`  ✓ Threshold filter: ${beforeThresh} → ${data.length} rows`);
         }
 
+        const duration = performance.now() - startTime;
+        console.log(`✅ [FILTER] Complete: ${data.length} rows in ${duration.toFixed(2)}ms`);
+        
+        // Track this operation with profiler
+        if (profiler) {
+            profiler.trackFunctionCall('filterByPosition', duration, {
+                inputRows: allData.length,
+                outputRows: data.length,
+                position: selectedPosition,
+                threshold: minThreshold
+            });
+        }
+        
+        // Warn if this took too long
+        if (duration > 500) {
+            console.error(`🚨 [FILTER] TOO SLOW: ${duration.toFixed(2)}ms - this is blocking the UI!`);
+        }
+        
         setFilteredData(data);
-    };
+    }, [allData, selectedPosition, minThreshold]);
 
     useEffect(() => {
         loadData();
     }, [selectedSeason, includeNgs]);
 
     useEffect(() => {
-        // Reset threshold and sort when position changes
+        console.log(`🎯 [POSITION_CHANGE] Position changed to: ${selectedPosition}`);
+        
+        // Reset threshold, sort, and visible rows when position changes
         let newThreshold = 0;
         let newSortKey = 'fantasy_points_ppr';
 
@@ -558,27 +1105,40 @@ export default function PlayerStats() {
             newSortKey = 'fantasy_points_ppr';
         }
 
+        console.log(`  → Setting threshold: ${newThreshold}, sortKey: ${newSortKey}`);
+        
         setMinThreshold(newThreshold);
         setSortConfig({ key: newSortKey, direction: 'desc' });
+        setVisibleRowCount(MAX_VISIBLE_ROWS); // Reset to default when changing position
+        
+        console.log(`✅ [POSITION_CHANGE] Complete`);
     }, [selectedPosition]);
 
     useEffect(() => {
+        console.log(`🔄 [FILTER_EFFECT] Triggered`, {
+            allDataLength: allData.length,
+            selectedPosition,
+            minThreshold
+        });
+        // CRITICAL FIX: Add guard to prevent infinite loops
+        if (allData.length === 0) {
+            console.log(`  ⏭️  Skipping filter - no data yet`);
+            setFilteredData([]);
+            return;
+        }
         filterByPosition();
-    }, [allData, selectedPosition, minThreshold]);
+    }, [filterByPosition, allData.length]); // Add allData.length to prevent stale closures
 
     // Calculate max value for the slider based on current data
+    // CRITICAL FIX: Use filteredData instead of filtering allData again (avoids duplicate work)
     const maxThresholdValue = useMemo(() => {
         const metric = getThresholdMetric(selectedPosition).key;
-        if (!allData.length) return 100;
+        if (!filteredData.length) return 100;
 
-        // Filter data by position first to get relevant max
-        const relevantData = selectedPosition === 'ALL'
-            ? allData
-            : allData.filter(p => p.position === selectedPosition);
-
-        const maxVal = Math.max(...relevantData.map(p => p[metric] || 0));
+        // Use already-filtered data instead of filtering again
+        const maxVal = Math.max(...filteredData.map(p => p[metric] || 0));
         return Math.ceil(maxVal / 10) * 10; // Round up to nearest 10
-    }, [allData, selectedPosition]);
+    }, [filteredData, selectedPosition]);
 
     if (loading) {
         return (
@@ -642,6 +1202,40 @@ export default function PlayerStats() {
             
             <div className="flex items-center justify-between mb-8">
                 <h1 className="text-4xl font-semibold text-gray-900 tracking-tight">📊 Player Stats</h1>
+                {/* Debug button - always visible, can click even during hang */}
+                <button
+                    onClick={() => {
+                        const profiler = window.__performanceProfiler?.PlayerStats;
+                        if (profiler) {
+                            try {
+                                profiler.exportData();
+                                alert('Profiler data exported! Check downloads.');
+                            } catch (e) {
+                                // Try localStorage fallback
+                                const saved = localStorage.getItem('__profiler_autosave');
+                                if (saved) {
+                                    const blob = new Blob([saved], { type: 'application/json' });
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = `profiler-autosave-${Date.now()}.json`;
+                                    a.click();
+                                    URL.revokeObjectURL(url);
+                                    alert('Saved profiler data exported!');
+                                } else {
+                                    alert('No profiler data available yet.');
+                                }
+                            }
+                        } else {
+                            alert('Profiler not available');
+                        }
+                    }}
+                    className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm font-medium"
+                    style={{ position: 'fixed', top: '10px', right: '10px', zIndex: 9999 }}
+                    title="Export profiler data (click even if page is frozen)"
+                >
+                    🔍 Export Profiler Data
+                </button>
             </div>
 
             <div className="bg-white rounded-lg shadow-md p-6 mb-6 border border-gray-200">
@@ -825,16 +1419,19 @@ export default function PlayerStats() {
                                     try {
                                         // Export to CSV
                                         const headers = columns.map(c => c.l).join(',');
-                                        const rows = sortedData.map(player => 
-                                            columns.map(col => {
-                                                const val = renderCellValue(player, col);
+                                        // Use cached values for CSV export too
+                                        const rows = sortedData.map(player => {
+                                            const playerKey = `${player.player_id || player.player_name || 'unknown'}-`;
+                                            return columns.map(col => {
+                                                const cacheKey = `${playerKey}${col.k}`;
+                                                const val = cellValueCache.get(cacheKey) ?? renderCellValue(player, col);
                                                 // Handle commas and quotes in CSV
                                                 if (typeof val === 'string' && (val.includes(',') || val.includes('"'))) {
                                                     return `"${val.replace(/"/g, '""')}"`;
                                                 }
                                                 return val ?? '';
-                                            }).join(',')
-                                        ).join('\n');
+                                            }).join(',');
+                                        }).join('\n');
                                         const csv = `${headers}\n${rows}`;
                                         const blob = new Blob([csv], { type: 'text/csv' });
                                         const url = window.URL.createObjectURL(blob);
@@ -920,52 +1517,83 @@ export default function PlayerStats() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
-                                {sortedData.map((player, rowIdx) => (
-                                    <tr
-                                        key={rowIdx}
-                                        className="hover:bg-primary-50 transition-colors duration-150 even:bg-gray-50/50"
-                                    >
-                                        {columns.map((col, colIdx) => {
-                                            const value = renderCellValue(player, col);
-                                            const range = columnRanges[col.k];
-                                            const bgcolor = (col.k !== 'player' && col.k !== 'team' && col.k !== 'position' && range)
-                                                ? getColorGradient(value, range.min, range.max, col.k)
-                                                : '';
-                                            const isSticky = ['player', 'team', 'position'].includes(col.k);
+                                {sortedData.slice(0, visibleRowCount).map((player, rowIdx) => {
+                                    // CRITICAL FIX: Get cached values instead of recalculating
+                                    const cacheKeyPrefix = `${player.player_id || player.player_name || 'unknown'}-`;
+                                    
+                                    return (
+                                        <tr
+                                            key={player.player_id || rowIdx}
+                                            className="hover:bg-primary-50 transition-colors duration-150 even:bg-gray-50/50"
+                                        >
+                                            {columns.map((col, colIdx) => {
+                                                // Use cached value - MUCH faster than recalculating
+                                                const cacheKey = `${cacheKeyPrefix}${col.k}`;
+                                                const value = cellValueCache.get(cacheKey) ?? renderCellValue(player, col);
+                                                
+                                                const range = columnRanges[col.k];
+                                                const bgcolor = (col.k !== 'player' && col.k !== 'team' && col.k !== 'position' && range)
+                                                    ? getColorGradient(value, range.min, range.max, col.k)
+                                                    : '';
+                                                const isSticky = ['player', 'team', 'position'].includes(col.k);
 
-                                            return (
-                                                <td
-                                                    key={col.k}
-                                                    style={{
-                                                        backgroundColor: bgcolor,
-                                                        ...(isSticky ? {
-                                                            position: 'sticky',
-                                                            left: colIdx === 0 ? 0 : colIdx === 1 ? 120 : 180,
-                                                            zIndex: 10,
-                                                            backgroundColor: bgcolor || (rowIdx % 2 === 0 ? '#ffffff' : '#f9fafb')
-                                                        } : {})
-                                                    }}
-                                                    className={`px-4 py-3 text-sm whitespace-nowrap border-r border-gray-100 last:border-r-0 ${col.a === 'right' ? 'text-right' : col.a === 'center' ? 'text-center' : 'text-left'
-                                                        } ${col.k === 'player' ? 'font-medium text-gray-900' :
-                                                            col.k === 'fantasy' ? 'text-primary-600 font-bold' :
-                                                                col.h ? 'font-semibold text-gray-900' : 'text-gray-700'
-                                                        }`}
-                                                >
-                                                    {renderCell(player, col)}
-                                                </td>
-                                            );
-                                        })}
-                                    </tr>
-                                ))}
+                                                return (
+                                                    <td
+                                                        key={col.k}
+                                                        style={{
+                                                            backgroundColor: bgcolor,
+                                                            ...(isSticky ? {
+                                                                position: 'sticky',
+                                                                left: colIdx === 0 ? 0 : colIdx === 1 ? 120 : 180,
+                                                                zIndex: 10,
+                                                                backgroundColor: bgcolor || (rowIdx % 2 === 0 ? '#ffffff' : '#f9fafb')
+                                                            } : {})
+                                                        }}
+                                                        className={`px-4 py-3 text-sm whitespace-nowrap border-r border-gray-100 last:border-r-0 ${col.a === 'right' ? 'text-right' : col.a === 'center' ? 'text-center' : 'text-left'
+                                                            } ${col.k === 'player' ? 'font-medium text-gray-900' :
+                                                                col.k === 'fantasy' ? 'text-primary-600 font-bold' :
+                                                                    col.h ? 'font-semibold text-gray-900' : 'text-gray-700'
+                                                            }`}
+                                                    >
+                                                        {renderCell(player, col, value)}
+                                                    </td>
+                                                );
+                                            })}
+                                        </tr>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>
+                    {/* Load More / Pagination */}
+                    {sortedData.length > visibleRowCount && (
+                        <div className="p-4 bg-gray-50 border-t border-gray-200 text-center">
+                            <p className="text-sm text-gray-600 mb-2">
+                                Showing {visibleRowCount} of {sortedData.length} players
+                            </p>
+                            <button
+                                onClick={() => setVisibleRowCount(prev => Math.min(prev + 100, sortedData.length))}
+                                className="btn-primary px-4 py-2 text-sm"
+                            >
+                                Load More ({Math.min(100, sortedData.length - visibleRowCount)} more)
+                            </button>
+                            {visibleRowCount < sortedData.length && (
+                                <button
+                                    onClick={() => setVisibleRowCount(sortedData.length)}
+                                    className="btn-secondary px-4 py-2 text-sm ml-2"
+                                >
+                                    Show All
+                                </button>
+                            )}
+                        </div>
+                    )}
                     {showDebug && (
                         <div className="p-2 bg-yellow-50 border-t text-xs">
                             <div>Container Width: {tableDimensions.containerWidth}px</div>
                             <div>Table Width: {tableDimensions.tableWidth}px</div>
                             <div>Can Scroll: {tableDimensions.tableWidth > tableDimensions.containerWidth ? 'YES' : 'NO'}</div>
                             <div>Columns Visible: {columns.length}</div>
+                            <div>Rows Rendered: {Math.min(visibleRowCount, sortedData.length)} / {sortedData.length}</div>
                         </div>
                     )}
                 </div>
@@ -984,3 +1612,10 @@ export default function PlayerStats() {
         </div>
     );
 }
+
+// Enable Why Did You Render tracking in development
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+    PlayerStats.whyDidYouRender = true;
+}
+
+export default PlayerStats;

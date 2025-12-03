@@ -1,0 +1,15 @@
+nfl_datamans:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: '{{ env_var("NFL_DB_HOST") | default("localhost") }}'
+      user: '{{ env_var("NFL_DB_USER") | default("postgres") }}'
+      password: '{{ env_var("NFL_DB_PASSWORD") | default("") }}'
+      port: '{{ env_var("NFL_DB_PORT") | default("5432") | int }}'
+      dbname: '{{ env_var("NFL_DB_NAME") | default("nfl_datamans") }}'
+      schema: 'raw_nfl'
+      threads: 4
+      keepalives_idle: 0
+      connect_timeout: 10
+      sslmode: '{{ env_var("NFL_DB_SSLMODE") | default("prefer") }}'
