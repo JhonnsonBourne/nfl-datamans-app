@@ -966,10 +966,10 @@ function PlayerStats() {
             const shouldIncludeNgs = includeNgs && (selectedPosition === 'WR' || selectedPosition === 'TE' || selectedPosition === 'ALL');
             console.log(`  → Fetching data with includeNgs=${shouldIncludeNgs}`);
             
-            // CRITICAL FIX: Use position-based limits instead of fetching 10,000 players
-            // Fetching 10,000 players causes UI freeze when processing/sorting/filtering
-            // Use reasonable limits based on position (similar to PlayerStatsOptimized)
-            let limit = 2000; // Default for ALL
+            // CRITICAL FIX: Use position-based limits to prevent backend timeouts
+            // Railway has ~30s timeout, so we need to keep requests fast
+            // Reduced limits to prevent 502 Bad Gateway errors
+            let limit = 1000; // Default for ALL (reduced from 2000)
             if (selectedPosition === 'QB') limit = 200;
             else if (selectedPosition === 'RB') limit = 400;
             else if (selectedPosition === 'WR') limit = 600;
