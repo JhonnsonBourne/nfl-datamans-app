@@ -987,7 +987,7 @@ def get_data(
     limit: int = Query(1000, ge=1, le=100000),
     offset: int = Query(0, ge=0),
     fmt: str = Query("json", pattern="^(json|csv)$", description="json or csv"),
-    include_ngs: bool = Query(True, description="Include NextGen Stats data (default: True)"),
+    include_ngs: bool = Query(False, description="Include NextGen Stats data (default: False for Railway free tier)"),
     ngs_stat_type: str = Query("receiving", pattern="^(receiving|rushing|passing)$", description="NextGen Stats type: receiving, rushing, or passing"),
 ):
     """Get dataset with performance tracking and caching."""
@@ -1083,11 +1083,9 @@ def get_data(
         # 1. All players are QBs (routes don't apply)
         # 2. Season is 2025 (no participation data available)
         # 3. No position column (can't determine)
-        should_calculate_routes = (
-            has_non_qb_positions and 
-            years and 
-            any(2016 <= y <= 2025 for y in years)
-        )
+        # 4. DISABLED for Railway free tier (requires 1.5-2.5GB RAM, we only have 1GB)
+        # Routes calculation disabled to prevent memory issues and timeouts
+        should_calculate_routes = False  # Disabled for Railway free tier - too memory intensive
         log_info(f"Should calculate routes: {should_calculate_routes}")
         
         if should_calculate_routes:
