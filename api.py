@@ -1147,10 +1147,12 @@ def get_data(
                         log_info(f"Routes calculation complete. Added routes for {len(non_qb_df)} non-QB players")
                 
                 # 2. Handle seasons WITHOUT participation data (e.g. 2025)
+                # DISABLED: Routes calculation disabled for Railway free tier (requires 1.5-2.5GB RAM)
                 # This block is OUTSIDE the if participation_years block so it runs for 2025-only requests
                 missing_part_years = [y for y in years if y not in participation_years and y <= 2025]
                 
-                if missing_part_years and has_non_qb_positions:
+                # DISABLED: Routes calculation disabled for Railway free tier
+                if False and missing_part_years and has_non_qb_positions:  # Changed to False to disable
                     log_info(f"Estimating routes for seasons (using Snaps * Pass Rate): {missing_part_years}")
                     try:
                         # Load PBP for pass rate calculation
@@ -2047,7 +2049,8 @@ async def get_top_players_batch(
         needs_routes = wr_metric in ['epa_per_route', 'yprr']
         has_routes = 'routes' in stats_df.columns and stats_df['routes'].notna().any() and (stats_df['routes'] > 0).any()
         
-        if needs_routes and not has_routes:
+        # DISABLED: Routes calculation disabled for Railway free tier (requires 1.5-2.5GB RAM)
+        if False and needs_routes and not has_routes:  # Changed to False to disable
             # Calculate routes (same logic as single endpoint)
             try:
                 if season > 2024:
@@ -2393,7 +2396,8 @@ async def get_top_players(
         needs_routes = metric in ['epa_per_route', 'yprr'] or (position and position.upper() in ['WR', 'TE'])
         has_routes = 'routes' in stats_df.columns and stats_df['routes'].notna().any() and (stats_df['routes'] > 0).any()
         
-        if needs_routes and not has_routes:
+        # DISABLED: Routes calculation disabled for Railway free tier (requires 1.5-2.5GB RAM)
+        if False and needs_routes and not has_routes:  # Changed to False to disable
             try:
                 # For 2025, estimate routes using snap counts and pass rate
                 if season > 2024:
