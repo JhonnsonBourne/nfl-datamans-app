@@ -224,15 +224,15 @@ def _write_debug_file():
 # Initialize debug file
 _write_debug_file()
 
-# CORS: Allow frontend (local dev + Vercel production)
+# CORS: Allow frontend (local dev + production)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",  # Local Vite dev server
         "http://127.0.0.1:5173",  # Local IP access
         "http://localhost:3000",  # Alternative local
+        "https://gridirondatahub.up.railway.app",  # Railway frontend production
         "https://*.vercel.app",   # Vercel deployments
-        "*"  # Allow all for now (tighten in production)
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -1073,6 +1073,11 @@ def get_data(
         if 'position' in df.columns:
             non_qb_positions = df['position'].isin(['WR', 'TE', 'RB', 'FB'])
             has_non_qb_positions = non_qb_positions.any()
+            log_info(f"Unique positions in DF: {df['position'].unique()}")
+        else:
+            log_info("Position column missing in DF")
+        
+        log_info(f"Routes check: years={years}, has_non_qb={has_non_qb_positions}")
         
         # Skip routes calculation if:
         # 1. All players are QBs (routes don't apply)
@@ -1081,8 +1086,9 @@ def get_data(
         should_calculate_routes = (
             has_non_qb_positions and 
             years and 
-            any(2016 <= y <= 2024 for y in years)
+            any(2016 <= y <= 2025 for y in years)
         )
+        log_info(f"Should calculate routes: {should_calculate_routes}")
         
         if should_calculate_routes:
             try:
@@ -1141,16 +1147,18 @@ def get_data(
                             df['routes'] = 0
                         
                         log_info(f"Routes calculation complete. Added routes for {len(non_qb_df)} non-QB players")
-                    
-                    # 2. Handle seasons WITHOUT participation data (e.g. 2025)
-                    # Skip estimation for 2025 - no participation data and routes estimation is slow
-                    missing_part_years = [y for y in years if y not in participation_years and y < 2025]
-                    
-                    if missing_part_years and has_non_qb_positions:
-                        log_info(f"Estimating routes for seasons (using Snaps * Pass Rate): {missing_part_years}")
+                
+                # 2. Handle seasons WITHOUT participation data (e.g. 2025)
+                # This block is OUTSIDE the if participation_years block so it runs for 2025-only requests
+                missing_part_years = [y for y in years if y not in participation_years and y <= 2025]
+                
+                if missing_part_years and has_non_qb_positions:
+                    log_info(f"Estimating routes for seasons (using Snaps * Pass Rate): {missing_part_years}")
                     try:
                         # Load PBP for pass rate calculation
                         pbp_est, _ = call_dataset(mod, "pbp", seasons=missing_part_years)
+                        log_info(f"Loaded PBP for estimation: {len(pbp_est)} rows")
+                        
                         pbp_cols = ["game_id", "play_id", "play_type", "week", "season", "posteam"]
                         pbp_est = pbp_est[[c for c in pbp_cols if c in pbp_est.columns]]
                         
@@ -1163,9 +1171,12 @@ def get_data(
                         
                         game_stats['pass_rate'] = game_stats['pass_plays'] / game_stats['total_plays']
                         game_stats['pass_rate'] = game_stats['pass_rate'].fillna(0)
+                        log_info(f"Calculated game stats: {len(game_stats)} rows")
                         
                         # Load Snap Counts
                         snaps, _ = call_dataset(mod, "snap_counts", seasons=missing_part_years)
+                        log_info(f"Loaded snap counts: {len(snaps)} rows")
+                        
                         # Snaps has 'pfr_player_id', 'player', 'team', 'season', 'week', 'offense_snaps'
                         # We need to map pfr_player_id to player_id (gsis_id) if possible, or join on name
                         
@@ -1176,6 +1187,7 @@ def get_data(
                         
                         # Filter snaps to offense
                         off_snaps = snaps[(snaps['offense_snaps'] > 0) & (snaps['position'].isin(['WR', 'TE', 'RB']))].copy()
+                        log_info(f"Filtered offense snaps: {len(off_snaps)} rows")
                         
                         # Join Pass Rate to Snaps
                         # Snaps has 'team', 'season', 'week'. game_stats has 'posteam', 'game_id'.
@@ -1192,6 +1204,7 @@ def get_data(
                             right_on=['season', 'week', 'posteam'],
                             how='inner'
                         )
+                        log_info(f"Merged snaps with pass rate: {len(estimated)} rows")
                         
                         estimated['estimated_routes'] = (estimated['offense_snaps'] * estimated['pass_rate']).round(1)
                         
@@ -1229,18 +1242,18 @@ def get_data(
                             df = pd.merge(df, est_routes, on=['player_id', 'season', 'week'], how='left')
                             df['routes'] = df['routes'].fillna(0)
                             
-                        print(f"Estimated routes calculated for {len(est_routes)} player-weeks")
-                        
+                        log_info(f"Estimated routes calculated for {len(est_routes)} player-weeks")
+                    
                     except Exception as e:
-                        print(f"Estimation failed: {e}")
+                        log_info(f"Estimation failed: {e}")
                         import traceback
                         traceback.print_exc()
-                    
-                    # Final cleanup - ensure routes column exists
-                    if 'routes' not in df.columns:
-                        df['routes'] = 0
-                    else:
-                        df['routes'] = df['routes'].fillna(0)
+                
+                # Final cleanup - ensure routes column exists
+                if 'routes' not in df.columns:
+                    df['routes'] = 0
+                else:
+                    df['routes'] = df['routes'].fillna(0)
             except Exception as e:
                 log_error(e, {"context": "Routes calculation", "seasons": years})
                 # Don't fail the request - just set routes to 0
