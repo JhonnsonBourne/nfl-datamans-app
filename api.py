@@ -3777,9 +3777,10 @@ async def get_similar_players(
             # Filter to same position first (optimization: only calculate routes for this position)
             position_players = stats_df[stats_df['position'] == position].copy()
             
+            # DISABLED: Routes calculation disabled for Railway free tier (requires 1.5-2.5GB RAM)
             # Calculate routes for WRs/TEs if needed (only for this position's players to save time)
             # Routes aren't in player_stats by default, but we only need them for efficiency metrics
-            if position.upper() in ['WR', 'TE']:
+            if False and position.upper() in ['WR', 'TE']:  # Changed to False to disable
                 # Check if routes column exists and has data for this position
                 has_routes = 'routes' in position_players.columns and position_players['routes'].notna().any() and (position_players['routes'] > 0).any()
                 
